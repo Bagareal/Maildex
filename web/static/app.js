@@ -12,11 +12,11 @@ function h(tag, props, ...kids) {
     else if (k in el && k !== 'list') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
-  append(el, kids);
+  append(el, ...kids);
   return el;
 }
 
-function append(el, kids) {
+function append(el, ...kids) {
   for (const k of kids.flat(Infinity)) {
     if (k == null || k === false) continue;
     el.append(k.nodeType ? k : document.createTextNode(String(k)));

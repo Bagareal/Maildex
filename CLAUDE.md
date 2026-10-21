@@ -31,6 +31,8 @@ make test    # go vet + go test ./...
 make build   # static binary in dist/
 ```
 
+`node --check` only catches syntax errors. After any change to `web/static/app.js`, exercise the UI in a real browser (e.g. headless Edge/Chrome driven over the DevTools protocol: create the password, add an email and a service, search, click every tab at desktop and ~400px widths) and look for runtime exceptions. v1.0.0 shipped with a runtime bug (`append()` misuse) that blanked every page after login and that no Go test or syntax check could see.
+
 CI (`.github/workflows/ci.yml`) checks gofmt, vet, tests, `node --check` on the JS and `bash -n` on the scripts. Run `gofmt -l .` before committing.
 
 ## Releasing
