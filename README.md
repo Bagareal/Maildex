@@ -29,7 +29,9 @@ Run this on the **Proxmox host** shell:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Bagareal/Maildex/main/install.sh)"
 ```
 
-It creates an unprivileged Debian LXC container (1 core, 512 MB RAM, 4 GB disk, DHCP, start on boot by default), downloads the latest release, verifies its checksum, and starts the service. Answer `n` to the first question to choose the container ID, resources, storage, bridge and a static IP.
+A step-by-step wizard opens. Pick the defaults (1 core, 512 MB RAM, 4 GB disk, DHCP, unprivileged, start on boot) or choose advanced settings: container ID, hostname, resources, storage, bridge, DHCP or static IP, DNS server and search domain, privileged or unprivileged, root SSH and verbose output. Cancel goes back one screen. The installer then creates the Debian LXC container, downloads the latest release, verifies its checksum and starts the service.
+
+If the container will not start with Debian 13, the installer saves LXC's debug log to `/tmp/maildex-lxc-<ID>.log` and retries automatically with Debian 12. You can also force it with `MAILDEX_DEBIAN=12 bash -c "$(curl -fsSL ...)"`.
 
 Then open `http://<container-ip>:8080` and choose a password.
 

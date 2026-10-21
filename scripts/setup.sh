@@ -3,9 +3,9 @@
 # Run as root. Safe to re-run: data in /var/lib/maildex is never touched.
 set -euo pipefail
 
-REPO="Bagareal/Maildex"
+REPO="${MAILDEX_REPO:-Bagareal/Maildex}"
 BASE="${MAILDEX_RELEASE_BASE:-https://github.com/${REPO}/releases}"
-RAW="https://raw.githubusercontent.com/${REPO}/main"
+RAW="https://raw.githubusercontent.com/${REPO}/${MAILDEX_BRANCH:-main}"
 BIN=/usr/local/bin/maildex
 DATA=/var/lib/maildex
 
@@ -19,8 +19,8 @@ esac
 
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v curl >/dev/null || ! command -v sha256sum >/dev/null; then
-  apt-get update -qq
-  apt-get install -y -qq curl ca-certificates coreutils >/dev/null
+  apt-get update -qq </dev/null
+  apt-get install -y -qq curl ca-certificates coreutils </dev/null >/dev/null
 fi
 
 # Resolve the latest release tag from the redirect (no API rate limits).
@@ -97,7 +97,7 @@ systemctl enable maildex >/dev/null 2>&1
 systemctl restart maildex
 
 # Keep the OS patched too: upgrades only, never removals or release upgrades.
-if ! apt-get update -qq || ! apt-get -y -qq -o Dpkg::Options::=--force-confold upgrade >/dev/null; then
+if ! apt-get update -qq </dev/null || ! apt-get -y -qq -o Dpkg::Options::=--force-confold upgrade </dev/null >/dev/null; then
   echo "Warning: system package upgrade failed (Maildex itself is updated)." >&2
 fi
 
