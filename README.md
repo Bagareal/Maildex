@@ -14,6 +14,8 @@ If you juggle many email addresses, you have probably lost track of which one ho
 
 - **Search that answers the question**: type "netflix" and see the email, username and sign-in method.
 - **Per-service details**: username, sign-in method (password, Google, Apple, passkey…), category, status (active / to close / closed), website, renewal date and notes.
+- **Two-step verification**: record which second factors each service has (authenticator app, passkey, security key, SMS, email code, app prompt, backup codes), filter by them, and see at a glance which active services have no 2FA.
+- **Provider logos**: pick your email provider (Gmail, Outlook, iCloud, Proton Mail, Yahoo, AOL, GMX, Zoho, Tuta and more) and see its logo everywhere. It is detected automatically from the address, and the logos are bundled, so nothing is fetched from the internet.
 - **Email overview**: every address with its recovery info and the list of services that depend on it.
 - **At-risk emails**: flag a leaked or old address and see every service you need to secure.
 - **Renewal reminders**: upcoming renewals are surfaced at the top of the list.
@@ -101,6 +103,10 @@ git tag v1.0.0 && git push origin v1.0.0
 ```
 
 This publishes `maildex-linux-amd64`, `maildex-linux-arm64` and `SHA256SUMS`, which is what `update` downloads.
+
+## Credits
+
+Provider logos come from [Simple Icons](https://simpleicons.org) (CC0 1.0). The brand marks belong to their respective owners.
 
 ## License
 

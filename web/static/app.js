@@ -1,4 +1,5 @@
 // Maildex front end: plain ES modules, no build step, no dependencies.
+import { PROVIDERS, providerFor, detectProvider } from '/providers.js';
 
 // ---------------------------------------------------------------- helpers
 const app = document.getElementById('app');
@@ -42,7 +43,37 @@ const ICONS = {
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
 };
+
+// Provider logo tile: brand colour with the logo, a coloured letter, or a neutral envelope.
+function providerTile(value, size = 44, address = '') {
+  const p = providerFor(value);
+  const px = `width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.3)}px;`;
+  if (p && p.path) {
+    const t = document.createElement('template');
+    t.innerHTML = `<svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="${p.path}"/></svg>`;
+    return h('div', { class: 'plogo', style: `${px}background:#${p.hex}`, title: p.name }, t.content.firstChild);
+  }
+  if (p) return h('div', { class: 'plogo letter', style: `${px}background:#${p.hex};font-size:${Math.round(size * 0.45)}px`, title: p.name }, p.name[0]);
+  if (value) return h('div', { class: 'plogo letter', style: `${px}background:${avatarColor(value)};font-size:${Math.round(size * 0.45)}px`, title: value }, value.trim()[0].toUpperCase());
+  const own = address && !detectProvider(address);
+  return h('div', { class: 'plogo neutral', style: px, title: own ? 'Own domain' : '' }, icon(own ? 'globe' : 'mail'));
+}
+
+const providerName = (value) => (providerFor(value) ? providerFor(value).name : value || '');
+
+// Second factors a service can have, in display order.
+const TWOFA = [
+  ['totp', 'Authenticator app', 'OTP'],
+  ['passkey', 'Passkey', 'Passkey'],
+  ['security-key', 'Security key', 'Key'],
+  ['sms', 'SMS code', 'SMS'],
+  ['email', 'Email code', 'Email'],
+  ['push', 'App prompt', 'Push'],
+  ['backup', 'Backup codes', 'Backup'],
+];
+const TWOFA_SHORT = Object.fromEntries(TWOFA.map(([k, , s]) => [k, s]));
 
 function icon(name) {
   const t = document.createElement('template');
@@ -112,6 +143,7 @@ const S = {
   fEmail: '',
   fStatus: '',
   fCat: '',
+  f2fa: '',
   passkeys: [],
   version: null,
   lastActivity: Date.now(),
@@ -365,6 +397,8 @@ function filteredServices() {
       if (S.fEmail && s.emailId !== S.fEmail) return false;
       if (S.fStatus && s.status !== S.fStatus) return false;
       if (S.fCat && s.category !== S.fCat) return false;
+      const tf = s.twoFactor || [];
+      if (S.f2fa === 'none' ? tf.length > 0 : S.f2fa && !tf.includes(S.f2fa)) return false;
       const e = emailById(s.emailId);
       const hay = [s.name, s.username, s.category, s.url, s.notes, METHOD_LABEL[s.loginMethod], e && e.address, e && e.label].join(' ').toLowerCase();
       return toks.every((t) => hay.includes(t));
@@ -375,11 +409,14 @@ function filteredServices() {
 function serviceCard(s) {
   const e = emailById(s.emailId);
   const meta = h('div', { class: 'meta' },
-    e ? h('button', { class: 'email-chip', title: 'Copy email', onclick: (ev) => { ev.stopPropagation(); copyText(e.address); } }, icon('mail'), h('span', null, e.address)) : null,
+    e ? h('button', { class: 'email-chip', title: 'Copy email', onclick: (ev) => { ev.stopPropagation(); copyText(e.address); } }, providerTile(e.provider || (detectProvider(e.address) || {}).id, 18, e.address), h('span', null, e.address)) : null,
     s.username && (!e || s.username.toLowerCase() !== e.address) ? h('span', null, s.username) : null,
     h('span', null, METHOD_LABEL[s.loginMethod] || s.loginMethod),
     s.category ? h('span', null, '· ' + s.category) : null,
   );
+  const tf = s.twoFactor || [];
+  const security = h('div', { class: 'meta sec' }, icon('shield'),
+    tf.length ? tf.map((k) => h('span', { class: 'badge ok' }, TWOFA_SHORT[k] || k)) : h('span', { class: 'badge' }, 'No 2FA'));
   const soon = s.renewal && daysUntil(s.renewal) <= 14;
   return h('button', { class: 'card item' + (s.status === 'closed' ? ' closed' : ''), onclick: () => serviceForm(s) },
     avatar(s.name),
@@ -387,7 +424,7 @@ function serviceCard(s) {
       h('div', { class: 'title' }, h('span', null, s.name),
         s.status !== 'active' ? h('span', { class: 'badge ' + (s.status === 'to-close' ? 'warn' : '') }, STATUS_LABEL[s.status]) : null,
         e && e.atRisk ? h('span', { class: 'badge danger' }, 'Email at risk') : null),
-      meta),
+      meta, security),
     s.renewal ? h('div', { class: 'renew' + (soon ? ' soon' : '') }, renewalText(s.renewal)) : null);
 }
 
@@ -412,9 +449,14 @@ function viewServices(v) {
   const filters = h('div', { class: 'filters' },
     sel('fEmail', 'All emails', emails.map((e) => [e.id, e.address])),
     sel('fStatus', 'Any status', Object.entries(STATUS_LABEL)),
+    sel('f2fa', 'Any 2FA', [['none', 'No 2FA'], ...TWOFA.map(([k, label]) => [k, 'With ' + label.toLowerCase()])]),
     cats.length ? sel('fCat', 'All categories', cats.map((c) => [c, c])) : null);
 
   const alerts = h('div', { class: 'alerts' });
+  const no2fa = services.filter((s) => s.status === 'active' && !(s.twoFactor || []).length).length;
+  if (no2fa) {
+    alerts.append(h('button', { class: 'alert-chip info', onclick: () => { S.f2fa = 'none'; S.fStatus = 'active'; renderView(); } }, icon('shield'), `${no2fa} active service${no2fa === 1 ? '' : 's'} without 2FA`));
+  }
   const risky = emails.filter((e) => e.atRisk);
   if (risky.length) {
     const n = risky.reduce((sum, e) => sum + servicesOf(e.id).length, 0);
@@ -444,8 +486,17 @@ function viewServices(v) {
 
 // ---------------------------------------------------------------- service form
 function serviceForm(existing) {
-  const s = existing || { name: '', emailId: S.fEmail || (S.data.emails[0] && S.data.emails[0].id) || '', username: '', loginMethod: 'password', category: '', status: 'active', url: '', renewal: '', notes: '' };
+  const s = existing || { name: '', emailId: S.fEmail || (S.data.emails[0] && S.data.emails[0].id) || '', username: '', loginMethod: 'password', category: '', status: 'active', twoFactor: [], url: '', renewal: '', notes: '' };
   const err = h('p', { class: 'error' });
+  const tfSel = new Set(s.twoFactor || []);
+  const tfChips = h('div', { class: 'chips' }, ...TWOFA.map(([k, label]) => {
+    const chip = h('button', { type: 'button', class: 'chip' + (tfSel.has(k) ? ' on' : ''), 'aria-pressed': tfSel.has(k) ? 'true' : 'false', onclick: () => {
+      if (tfSel.has(k)) tfSel.delete(k); else tfSel.add(k);
+      chip.classList.toggle('on', tfSel.has(k));
+      chip.setAttribute('aria-pressed', tfSel.has(k) ? 'true' : 'false');
+    } }, label);
+    return chip;
+  }));
   const name = h('input', { class: 'input', value: s.name, placeholder: 'Netflix, GitHub, bank…', required: true, maxLength: 120, autocomplete: 'off' });
   const email = h('select', { class: 'input' }, ...S.data.emails.map((e) => h('option', { value: e.id, selected: e.id === s.emailId }, e.address + (e.label ? ` (${e.label})` : ''))));
   const username = h('input', { class: 'input', value: s.username, placeholder: 'If different from the email', autocomplete: 'off', autocapitalize: 'none' });
@@ -463,13 +514,14 @@ function serviceForm(existing) {
     field('Email used', email),
     h('div', { class: 'row2' }, field('Sign-in method', method), field('Status', status)),
     field('Username', username),
+    h('div', { class: 'field' }, h('span', null, 'Two-step verification (2FA)'), tfChips),
     h('div', { class: 'row2' }, field('Category', category), field('Renewal date', renewal)),
     field('Website', url),
     field('Notes', notes),
     h('datalist', { id: 'cat-list' }, ...cats.map((c) => h('option', { value: c }))),
     err);
 
-  const body = () => ({ name: name.value, emailId: email.value, username: username.value, loginMethod: method.value, category: category.value, status: status.value, url: url.value, renewal: renewal.value, notes: notes.value });
+  const body = () => ({ name: name.value, emailId: email.value, username: username.value, loginMethod: method.value, category: category.value, status: status.value, twoFactor: [...tfSel], url: url.value, renewal: renewal.value, notes: notes.value });
   const save = async (close) => {
     err.textContent = '';
     if (!name.value.trim()) { err.textContent = 'Give the service a name.'; return; }
@@ -511,10 +563,10 @@ function viewEmails(v) {
     const svcs = servicesOf(e.id).sort((a, b) => a.name.localeCompare(b.name));
     list.append(h('div', { class: 'card email-card' },
       h('div', { class: 'email-top' },
-        avatar(e.address),
+        providerTile(e.provider || (detectProvider(e.address) || {}).id, 44, e.address),
         h('div', { class: 'body' },
           h('div', { class: 'email-addr' }, e.address),
-          h('div', { class: 'meta' }, [e.label, e.provider].filter(Boolean).join(' · ') || null, e.atRisk ? h('span', { class: 'badge danger' }, 'At risk') : null)),
+          h('div', { class: 'meta' }, [e.label, providerName(e.provider) || (detectProvider(e.address) || {}).name].filter(Boolean).join(' · ') || null, e.atRisk ? h('span', { class: 'badge danger' }, 'At risk') : null)),
         h('button', { class: 'btn small', onclick: () => copyText(e.address), 'aria-label': 'Copy email' }, icon('copy')),
         h('button', { class: 'btn small', onclick: () => emailForm(e) }, 'Edit')),
       e.recovery ? h('p', { class: 'note' }, 'Recovery: ' + e.recovery) : null,
@@ -531,20 +583,44 @@ function emailForm(existing) {
   const err = h('p', { class: 'error' });
   const address = h('input', { class: 'input', type: 'email', value: e.address, placeholder: 'name@example.com', required: true, autocapitalize: 'none', autocomplete: 'off' });
   const label = h('input', { class: 'input', value: e.label, placeholder: 'Personal, work, old…', maxLength: 80 });
-  const provider = h('input', { class: 'input', value: e.provider, placeholder: 'Gmail, Proton, iCloud…', list: 'prov-list', maxLength: 80 });
+  // Provider picker: known providers show their logo; "Own domain" and "Other" cover the rest.
+  const known = providerFor(e.provider);
+  let choice = known ? known.id : !e.provider ? '' : e.provider.toLowerCase() === 'own domain' ? 'own' : 'other';
+  let touched = !!existing && !!e.provider; // stop auto-detecting once the user has decided
+  const custom = h('input', { class: 'input', value: choice === 'other' ? e.provider : '', placeholder: 'Provider name', maxLength: 80, style: choice === 'other' ? '' : 'display:none' });
+  const grid = h('div', { class: 'prov-grid' });
+  const options = [...PROVIDERS.map((p) => [p.id, p.name]), ['own', 'Own domain'], ['other', 'Other']];
+  const drawPicker = () => {
+    clear(grid);
+    for (const [id, name] of options) {
+      grid.append(h('button', { type: 'button', class: 'prov' + (choice === id ? ' on' : ''), 'aria-pressed': choice === id ? 'true' : 'false', onclick: () => {
+        touched = true;
+        choice = choice === id ? '' : id;
+        custom.style.display = choice === 'other' ? '' : 'none';
+        drawPicker();
+        if (choice === 'other') custom.focus();
+      } }, id === 'own' ? providerTile('', 36, 'me@own.example') : id === 'other' ? providerTile('', 36, '') : providerTile(id, 36), h('span', null, name)));
+    }
+  };
+  drawPicker();
+  address.addEventListener('input', () => {
+    const p = touched ? null : detectProvider(address.value);
+    if (p && p.id !== choice) { choice = p.id; custom.style.display = 'none'; drawPicker(); }
+  });
+  const providerValue = () => (choice === 'own' ? 'Own domain' : choice === 'other' ? custom.value : choice);
   const recovery = h('input', { class: 'input', value: e.recovery, placeholder: 'Recovery phone or backup email', maxLength: 300 });
   const notes = h('textarea', { class: 'input', placeholder: 'Anything worth remembering' });
   notes.value = e.notes;
   const risk = h('input', { type: 'checkbox', checked: e.atRisk });
   const form = h('form', { style: 'display:grid;gap:12px' },
     field('Email address', address),
-    h('div', { class: 'row2' }, field('Label', label), field('Provider', provider)),
+    field('Label', label),
+    h('div', { class: 'field' }, h('span', null, 'Email provider'), grid, custom),
     field('Recovery', recovery),
     field('Notes', notes),
     h('label', { class: 'check' }, risk, h('span', null, 'Mark as at risk (leaked, old or insecure)')),
-    h('datalist', { id: 'prov-list' }, ...['Gmail', 'Outlook', 'iCloud', 'Proton', 'Yahoo', 'Fastmail', 'Own domain'].map((p) => h('option', { value: p }))),
     err);
-  const body = () => ({ address: address.value, label: label.value, provider: provider.value, recovery: recovery.value, notes: notes.value, atRisk: risk.checked });
+  const body = () => ({ address: address.value, label: label.value, provider: providerValue(), recovery: recovery.value, notes: notes.value, atRisk: risk.checked });
   const save = async (close) => {
     err.textContent = '';
     try {
@@ -624,7 +700,7 @@ function viewSettings(v) {
   // Data
   const file = h('input', { type: 'file', accept: '.json,.csv,application/json,text/csv', style: 'display:none', onchange: importFile });
   const data = h('div', { class: 'card section' }, h('h2', null, icon('download'), 'Backup & import'),
-    h('p', { class: 'note' }, 'Export everything as JSON, or import a JSON export or a CSV (name, email, username, category, url…). Passwords in CSV files are never read.'),
+    h('p', { class: 'note' }, 'Export everything as JSON, or import a JSON export or a CSV (name, email, username, category, url, 2fa…). Passwords in CSV files are never read.'),
     h('div', { class: 'row', style: 'justify-content:flex-start' },
       h('button', { class: 'btn', onclick: exportData }, icon('download'), 'Export JSON'),
       h('button', { class: 'btn', onclick: () => file.click() }, icon('upload'), 'Import file'), file));
@@ -685,7 +761,23 @@ const CSV_ALIASES = {
   notes: ['notes', 'note'],
   renewal: ['renewal', 'renews', 'expires', 'renewal date'],
   loginMethod: ['method', 'login method', 'loginmethod', 'sign-in method'],
+  twoFactor: ['2fa', 'mfa', 'two factor', 'two-factor', 'twofactor', '2-step', 'otp'],
 };
+
+// Turns free text like "OTP, passkey; sms" into the app's 2FA ids.
+function parseTwoFactor(text) {
+  const out = new Set();
+  for (const tok of text.toLowerCase().split(/[,;|/+]+/).map((s) => s.trim()).filter(Boolean)) {
+    if (/passkey/.test(tok)) out.add('passkey');
+    else if (/otp|authenticator/.test(tok)) out.add('totp');
+    else if (/security|fido|yubi|u2f|hardware|key/.test(tok)) out.add('security-key');
+    else if (/sms|text/.test(tok)) out.add('sms');
+    else if (/mail/.test(tok)) out.add('email');
+    else if (/push|prompt/.test(tok)) out.add('push');
+    else if (/backup|recovery/.test(tok)) out.add('backup');
+  }
+  return [...out];
+}
 
 function csvToImport(text) {
   const rows = parseCSV(text);
@@ -701,7 +793,7 @@ function csvToImport(text) {
     let username = get(r, 'username');
     if (!email && username.includes('@')) { email = username.toLowerCase(); username = ''; }
     if (!email) continue;
-    services.push({ name: get(r, 'name'), email, username, url: get(r, 'url'), category: get(r, 'category'), status: get(r, 'status'), notes: get(r, 'notes'), renewal: get(r, 'renewal'), loginMethod: get(r, 'loginMethod') });
+    services.push({ name: get(r, 'name'), email, username, url: get(r, 'url'), category: get(r, 'category'), status: get(r, 'status'), notes: get(r, 'notes'), renewal: get(r, 'renewal'), loginMethod: get(r, 'loginMethod'), twoFactor: parseTwoFactor(get(r, 'twoFactor')) });
   }
   return { emails: [], services };
 }

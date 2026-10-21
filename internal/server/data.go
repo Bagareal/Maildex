@@ -12,7 +12,24 @@ import (
 var (
 	statuses = map[string]bool{"active": true, "to-close": true, "closed": true}
 	methods  = map[string]bool{"password": true, "google": true, "apple": true, "microsoft": true, "github": true, "facebook": true, "passkey": true, "sso": true, "other": true}
+	// Second factors, in display order.
+	twoFactorKinds = []string{"totp", "passkey", "security-key", "sms", "email", "push", "backup"}
 )
+
+// cleanTwoFactor keeps only known methods, once each, in display order.
+func cleanTwoFactor(in []string) []string {
+	have := map[string]bool{}
+	for _, m := range in {
+		have[strings.ToLower(strings.TrimSpace(m))] = true
+	}
+	out := []string{}
+	for _, k := range twoFactorKinds {
+		if have[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
 
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)
@@ -44,15 +61,16 @@ func (in emailInput) normalize() (store.Email, error) {
 }
 
 type serviceInput struct {
-	Name        string `json:"name"`
-	EmailID     string `json:"emailId,omitempty"`
-	Username    string `json:"username"`
-	LoginMethod string `json:"loginMethod"`
-	Category    string `json:"category"`
-	Status      string `json:"status"`
-	URL         string `json:"url"`
-	Renewal     string `json:"renewal"`
-	Notes       string `json:"notes"`
+	Name        string   `json:"name"`
+	EmailID     string   `json:"emailId,omitempty"`
+	Username    string   `json:"username"`
+	LoginMethod string   `json:"loginMethod"`
+	Category    string   `json:"category"`
+	Status      string   `json:"status"`
+	TwoFactor   []string `json:"twoFactor"`
+	URL         string   `json:"url"`
+	Renewal     string   `json:"renewal"`
+	Notes       string   `json:"notes"`
 }
 
 func (in serviceInput) normalize() (store.Service, error) {
@@ -85,7 +103,7 @@ func (in serviceInput) normalize() (store.Service, error) {
 	}
 	return store.Service{
 		Name: name, EmailID: in.EmailID, Username: clip(in.Username, 120), LoginMethod: method,
-		Category: clip(in.Category, 40), Status: status, URL: url, Renewal: renewal, Notes: clip(in.Notes, 2000),
+		Category: clip(in.Category, 40), Status: status, TwoFactor: cleanTwoFactor(in.TwoFactor), URL: url, Renewal: renewal, Notes: clip(in.Notes, 2000),
 	}, nil
 }
 

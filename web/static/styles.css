@@ -163,6 +163,25 @@ textarea.input { resize: vertical; min-height: 84px; }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.danger { background: rgba(229, 72, 77, .14); color: var(--danger); }
 .item.closed { opacity: .6; }
+.meta.sec { gap: 4px 6px; }
+.meta.sec svg.i { width: 15px; height: 15px; }
+
+/* Provider logos */
+.plogo { display: grid; place-items: center; flex: none; color: #fff; font-weight: 700; overflow: hidden; }
+.plogo svg.glyph { width: 56%; height: 56%; fill: currentColor; stroke: none; }
+.plogo.neutral { background: var(--surface-2); color: var(--muted); }
+.plogo.neutral svg.i { width: 54%; height: 54%; }
+.email-chip .plogo { margin-left: -4px; }
+.prov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.prov { display: grid; justify-items: center; gap: 6px; padding: 10px 4px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--surface); cursor: pointer; font-size: 12px; font-weight: 600; transition: border-color .15s, background .15s; }
+.prov:hover { background: var(--surface-2); }
+.prov.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* 2FA chips */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { padding: 7px 13px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface); cursor: pointer; font-size: 13.5px; font-weight: 600; transition: border-color .15s, background .15s; }
+.chip:hover { background: var(--surface-2); }
+.chip.on { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
 .renew { text-align: right; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .renew.soon { color: var(--warn); font-weight: 700; }
 
@@ -195,7 +214,8 @@ code { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; back
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; background: rgba(8, 9, 16, .55); backdrop-filter: blur(3px); animation: fade .15s; }
 .modal { width: 100%; max-width: 560px; max-height: 94dvh; overflow: auto; background: var(--surface); border-radius: 24px 24px 0 0; padding: 20px 18px calc(20px + var(--safe-b)); display: grid; gap: 14px; animation: up .2s ease-out; border: 1px solid var(--border); }
 .modal h2 { font-size: 19px; letter-spacing: -0.02em; display: flex; justify-content: space-between; align-items: center; }
-.modal .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 4px; }
+.modal .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 4px; position: sticky; bottom: calc(-20px - var(--safe-b)); padding: 12px 0 calc(14px + var(--safe-b)); background: var(--surface); border-top: 1px solid var(--border); }
+@media (min-width: 700px) { .modal .actions { bottom: -20px; padding-bottom: 14px; } }
 .modal .actions .spacer { flex: 1; }
 @media (min-width: 700px) { .overlay { align-items: center; } .modal { border-radius: 24px; padding-bottom: 20px; } }
 @keyframes fade { from { opacity: 0; } }

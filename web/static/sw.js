@@ -2,7 +2,7 @@
 // online and falls back to the cached shell when offline. API calls are never
 // cached, so no email data is ever stored by the worker.
 const CACHE = 'maildex-shell';
-const SHELL = ['/', '/app.js', '/styles.css', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'];
+const SHELL = ['/', '/app.js', '/providers.js', '/styles.css', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

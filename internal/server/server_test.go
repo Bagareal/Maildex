@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -78,9 +79,12 @@ func TestFullFlow(t *testing.T) {
 	want(t, c.do("POST", "/api/emails", map[string]any{"address": "nope"}, nil), 400, "invalid email")
 
 	var svc store.Service
-	want(t, c.do("POST", "/api/services", map[string]any{"name": "Netflix", "emailId": email.ID, "renewal": "2030-01-31"}, &svc), 200, "create service")
+	want(t, c.do("POST", "/api/services", map[string]any{"name": "Netflix", "emailId": email.ID, "renewal": "2030-01-31", "twoFactor": []string{"PASSKEY", "totp", "bogus", "totp"}}, &svc), 200, "create service")
 	if svc.Status != "active" || svc.LoginMethod != "password" {
 		t.Fatalf("defaults not applied: %+v", svc)
+	}
+	if got := strings.Join(svc.TwoFactor, ","); got != "totp,passkey" {
+		t.Fatalf("two-factor not cleaned: %q", got)
 	}
 	want(t, c.do("POST", "/api/services", map[string]any{"name": "X", "emailId": "missing"}, nil), 400, "service with unknown email")
 	want(t, c.do("POST", "/api/services", map[string]any{"name": "X", "emailId": email.ID, "renewal": "31/01/2030"}, nil), 400, "bad date")
@@ -104,6 +108,11 @@ func TestFullFlow(t *testing.T) {
 	want(t, c.do("POST", "/api/import", export, &res), 200, "import")
 	if res.EmailsAdded != 1 || res.ServicesAdded != 1 {
 		t.Fatalf("bad import result: %+v", res)
+	}
+	var again store.Data
+	want(t, c.do("GET", "/api/data", nil, &again), 200, "data after import")
+	if len(again.Services) != 1 || strings.Join(again.Services[0].TwoFactor, ",") != "totp,passkey" {
+		t.Fatalf("two-factor lost in export/import: %+v", again.Services)
 	}
 	want(t, c.do("POST", "/api/import", export, &res), 200, "re-import")
 	if res.ServicesAdded != 0 || res.Skipped != 1 {

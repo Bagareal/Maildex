@@ -36,6 +36,7 @@ type Service struct {
 	LoginMethod string    `json:"loginMethod"`
 	Category    string    `json:"category"`
 	Status      string    `json:"status"`
+	TwoFactor   []string  `json:"twoFactor"` // enabled second factors, empty when none
 	URL         string    `json:"url"`
 	Renewal     string    `json:"renewal"` // YYYY-MM-DD or empty
 	Notes       string    `json:"notes"`

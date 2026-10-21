@@ -34,7 +34,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		for _, sv := range d.Services {
 			out.Services = append(out.Services, transferService{
 				serviceInput: serviceInput{Name: sv.Name, Username: sv.Username, LoginMethod: sv.LoginMethod, Category: sv.Category,
-					Status: sv.Status, URL: sv.URL, Renewal: sv.Renewal, Notes: sv.Notes},
+					Status: sv.Status, TwoFactor: sv.TwoFactor, URL: sv.URL, Renewal: sv.Renewal, Notes: sv.Notes},
 				Email: addr[sv.EmailID],
 			})
 		}

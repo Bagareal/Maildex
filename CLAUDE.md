@@ -8,7 +8,7 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 - `internal/store`: in-memory state persisted atomically to `data.json` (emails, services, settings) and `auth.json` (password hash, passkeys, sessions). Access only via `View` / `Update`.
 - `internal/server`: HTTP API + static hosting. `auth.go` (sessions, password, idle lock), `passkeys.go` (WebAuthn endpoints), `data.go` (CRUD + validation), `transfer.go` (JSON import/export), `update.go` (GitHub latest-release check).
 - `internal/webauthn`: minimal WebAuthn relying party (ES256 + RS256, "none" attestation, CBOR decoder). Has a software-authenticator test.
-- `web/static`: the whole UI (`index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `icons/`), embedded via `web/embed.go`. **No build step, no npm.**
+- `web/static`: the whole UI (`index.html`, `app.js`, `providers.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `icons/`), embedded via `web/embed.go`. **No build step, no npm.**
 - `install.sh`: run on the Proxmox host, creates the LXC. `scripts/setup.sh`: runs inside the container, installs/updates the binary and systemd unit.
 - `tools/genicons`: regenerates the PNG icons (`make icons`).
 
@@ -22,6 +22,9 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 - Passkeys require a secure origin and a hostname (not an IP). `expectFor` derives RP ID/origin from `Host` / `X-Forwarded-*`, so reverse proxies must forward those.
 - Export/import files reference emails by address, not ID, so they can be edited by hand. Import is idempotent.
 - README is in English (user requirement). Chat with the user is in Italian.
+
+- `web/static/providers.js` holds the email provider catalogue (id, name, brand colour, Simple Icons SVG path, domains for auto-detection). Logos are bundled on purpose: no external requests. `Email.Provider` stores a provider id (e.g. `gmail`), `Own domain`, or free text; `providerFor()` also resolves legacy names. Providers without a logo render as a coloured letter tile.
+- `Service.TwoFactor` is a list of ids (`totp`, `passkey`, `security-key`, `sms`, `email`, `push`, `backup`); the server whitelists and orders them (`cleanTwoFactor`). Empty means none recorded.
 
 ## Commands
 
