@@ -9,7 +9,8 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 - `internal/server`: HTTP API + static hosting. `auth.go` (sessions, password, idle lock), `passkeys.go` (WebAuthn endpoints), `data.go` (CRUD + validation), `transfer.go` (JSON import/export), `update.go` (GitHub latest-release check).
 - `internal/webauthn`: minimal WebAuthn relying party (ES256 + RS256, "none" attestation, CBOR decoder). Has a software-authenticator test.
 - `web/static`: the whole UI (`index.html`, `app.js`, `providers.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `icons/`), embedded via `web/embed.go`. **No build step, no npm.**
-- `install.sh`: run on the Proxmox host, creates the LXC. `scripts/setup.sh`: runs inside the container, installs/updates the binary and systemd unit.
+- `install.sh`: run on the Proxmox host. A whiptail step-by-step wizard modelled on homie's installer (defaults or advanced: ID, hostname, cores, RAM, disk, storage, bridge, DHCP/static IP, **DNS server + search domain**, privileged/unprivileged, root SSH, verbose, confirm; Cancel = back). Checks `lxcfs`, picks Debian 13 then 12 templates filtered by CPU arch, and if a container will not start it saves the LXC debug log to `/tmp/maildex-lxc-<ID>.log`, destroys it and retries with the next template (`MAILDEX_DEBIAN=12` skips 13). It pipes `scripts/setup.sh` into `pct exec`, so setup.sh must never read stdin (apt-get calls use `</dev/null`).
+- `scripts/setup.sh`: runs inside the container, installs/updates the binary and systemd unit, and creates `update`, `maildex-update` and `maildex-reset-password` in `/usr/local/bin`.
 - `tools/genicons`: regenerates the PNG icons (`make icons`).
 
 ## Conventions and decisions
@@ -22,9 +23,28 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 - Passkeys require a secure origin and a hostname (not an IP). `expectFor` derives RP ID/origin from `Host` / `X-Forwarded-*`, so reverse proxies must forward those.
 - Export/import files reference emails by address, not ID, so they can be edited by hand. Import is idempotent.
 - README is in English (user requirement). Chat with the user is in Italian.
-
 - `web/static/providers.js` holds the email provider catalogue (id, name, brand colour, Simple Icons SVG path, domains for auto-detection). Logos are bundled on purpose: no external requests. `Email.Provider` stores a provider id (e.g. `gmail`), `Own domain`, or free text; `providerFor()` also resolves legacy names. Providers without a logo render as a coloured letter tile.
 - `Service.TwoFactor` is a list of ids (`totp`, `passkey`, `security-key`, `sms`, `email`, `push`, `backup`); the server whitelists and orders them (`cleanTwoFactor`). Empty means none recorded.
+
+## Working with the user
+
+- Talk in Italian; keep README and code comments in English.
+- They want things done, not discussed: when they say "do everything", implement, test, commit, push and release in one go, then summarise plainly (what changed, what was and was not verified).
+- "Like homie" means the same behaviour, not just the same idea. Read `https://github.com/Bagareal/homie` (`curl` the raw files; WebFetch only summarises) before building something homie already does.
+- Never put CLAUDE.md or anything about the AI conversation in `.gitignore`; CLAUDE.md is committed on purpose.
+- Be upfront about what was not tested on their real Proxmox host. Their live container is CT 106 (`192.168.1.51`).
+
+## Environment notes (Windows dev machine)
+
+- Drive E: does not record ownership, so git refuses the folder. Use `git -c safe.directory=E:/DOWNLOADS/myemails ...` per command (do not change global config) and `go build -buildvcs=false`.
+- No `gh`, no `make`, no Python. Node 24 and headless Edge (`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`) are available; a throwaway DevTools-protocol script (launch Edge with `--headless=new --remote-debugging-port`, use real `Input.dispatchMouseEvent` clicks, scroll elements into view, report `Runtime.exceptionThrown`) is how the UI was verified. Keep such scripts in the scratchpad, not the repo.
+- `git push` works over HTTPS with the stored credentials; set `GIT_TERMINAL_PROMPT=0` so it fails instead of hanging.
+
+## Status
+
+- Latest release: **v1.1.0** (v1.0.0 initial, v1.0.1 fixed blank pages after login, v1.1.0 provider logos + per-service 2FA).
+- Not yet verified on real hardware: passkey/biometric unlock (needs HTTPS and a hostname) and `install.sh` on a Proxmox host where the first run failed to start the container with Debian 13.
+- Open issue: on the user's container the `update` command was not found after install. Cause unknown (`setup.sh` creates it; they were given the one-liner `curl -fsSL .../scripts/setup.sh | bash` to recreate it). Check `ls -l /usr/local/bin` and `echo $PATH` in the container if it recurs.
 
 ## Commands
 
@@ -51,4 +71,5 @@ The workflow publishes `maildex-linux-amd64`, `maildex-linux-arm64` and `SHA256S
 ## Ideas not built yet
 
 - IMAP scan to discover services from mailboxes automatically (needs mailbox credentials, so deliberately left out of v1).
+- Logos for services (Netflix etc.): only email providers have logos today; a bundled catalogue would be large, fetching favicons would need internet.
 - Tags (a service currently has a single category), attachments, per-service TOTP-free "recovery hints" templates.
