@@ -700,7 +700,7 @@ function viewSettings(v) {
   // Data
   const file = h('input', { type: 'file', accept: '.json,.csv,application/json,text/csv', style: 'display:none', onchange: importFile });
   const data = h('div', { class: 'card section' }, h('h2', null, icon('download'), 'Backup & import'),
-    h('p', { class: 'note' }, 'Export everything as JSON, or import a JSON export or a CSV (name, email, username, category, url, 2fa…). Passwords in CSV files are never read.'),
+    h('p', { class: 'note' }, 'Export everything as JSON, or import a JSON export or a CSV (name, email, username, category, url, 2fa…). Bitwarden and Vaultwarden exports work too. The file is read only in your browser and is never uploaded: passwords, TOTP secrets and notes are left out.'),
     h('div', { class: 'row', style: 'justify-content:flex-start' },
       h('button', { class: 'btn', onclick: exportData }, icon('download'), 'Export JSON'),
       h('button', { class: 'btn', onclick: () => file.click() }, icon('upload'), 'Import file'), file));
@@ -779,6 +779,22 @@ function parseTwoFactor(text) {
   return [...out];
 }
 
+// Password-manager exports contain real secrets. Everything below runs in the
+// browser and builds the upload from an explicit list of harmless fields, so
+// passwords, TOTP secrets, cards and notes never leave the file picker. The
+// file itself is never sent to the server.
+const SERVICE_FIELDS = ['name', 'email', 'username', 'loginMethod', 'category', 'status', 'twoFactor', 'url', 'renewal', 'notes'];
+const EMAIL_FIELDS = ['address', 'label', 'provider', 'recovery', 'notes', 'atRisk'];
+const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj && obj[k] !== undefined).map((k) => [k, obj[k]]));
+
+// A login's username is usually the email; when it is, it becomes the email and the username is left blank.
+function splitIdentity(email, username) {
+  email = (email || '').trim().toLowerCase();
+  username = (username || '').trim();
+  if (!email && username.includes('@')) { email = username.toLowerCase(); username = ''; }
+  return { email, username };
+}
+
 function csvToImport(text) {
   const rows = parseCSV(text);
   if (rows.length < 2) throw new Error('The CSV has no data rows.');
@@ -787,15 +803,50 @@ function csvToImport(text) {
   for (const [key, names] of Object.entries(CSV_ALIASES)) col[key] = head.findIndex((c) => names.includes(c));
   if (col.name < 0) throw new Error('The CSV needs a "name" (or "service") column.');
   const get = (r, k) => (col[k] >= 0 ? (r[col[k]] || '').trim() : '');
+  // Exports with a password column (Bitwarden, Chrome, ...) often hide secrets in notes too: leave notes out.
+  const hasSecrets = head.some((c) => /password|totp/.test(c));
+  const typeCol = head.includes('login_password') ? head.indexOf('type') : -1; // Bitwarden: login/note/card/identity
+  const totpCol = head.findIndex((c) => c === 'login_totp' || c === 'totp');
   const services = [];
+  let skipped = 0;
   for (const r of rows.slice(1)) {
-    let email = get(r, 'email').toLowerCase();
-    let username = get(r, 'username');
-    if (!email && username.includes('@')) { email = username.toLowerCase(); username = ''; }
-    if (!email) continue;
-    services.push({ name: get(r, 'name'), email, username, url: get(r, 'url'), category: get(r, 'category'), status: get(r, 'status'), notes: get(r, 'notes'), renewal: get(r, 'renewal'), loginMethod: get(r, 'loginMethod'), twoFactor: parseTwoFactor(get(r, 'twoFactor')) });
+    if (typeCol >= 0 && (r[typeCol] || '').trim().toLowerCase() !== 'login') continue;
+    const { email, username } = splitIdentity(get(r, 'email'), get(r, 'username'));
+    if (!email) { skipped++; continue; }
+    const twoFactor = parseTwoFactor(get(r, 'twoFactor'));
+    if (totpCol >= 0 && (r[totpCol] || '').trim() && !twoFactor.includes('totp')) twoFactor.push('totp'); // only the fact, never the secret
+    services.push({ name: get(r, 'name'), email, username, url: get(r, 'url'), category: get(r, 'category'), status: get(r, 'status'), notes: hasSecrets ? '' : get(r, 'notes'), renewal: get(r, 'renewal'), loginMethod: get(r, 'loginMethod'), twoFactor });
   }
-  return { emails: [], services };
+  return { payload: { emails: [], services }, skipped, notesLeftOut: hasSecrets };
+}
+
+function bitwardenToImport(j) {
+  if (j.encrypted) throw new Error('This Bitwarden export is encrypted. Export it again as unencrypted JSON or CSV.');
+  const folders = new Map((j.folders || []).map((f) => [f.id, f.name]));
+  const services = [];
+  let skipped = 0;
+  for (const it of j.items || []) {
+    if (it.type !== 1) continue; // logins only: notes, cards and identities are ignored
+    const login = it.login || {};
+    const { email, username } = splitIdentity('', login.username);
+    if (!email) { skipped++; continue; }
+    const twoFactor = [];
+    if (login.totp) twoFactor.push('totp'); // only the fact, never the secret
+    if ((login.fido2Credentials || []).length) twoFactor.push('passkey');
+    const uri = ((login.uris || [])[0] || {}).uri || '';
+    services.push({ name: it.name || '', email, username, url: /^https?:\/\//i.test(uri) ? uri : '', category: folders.get(it.folderId) || '', twoFactor });
+  }
+  return { payload: { emails: [], services }, skipped, notesLeftOut: true };
+}
+
+function parseImport(name, text) {
+  if (/\.csv$/i.test(name)) return csvToImport(text);
+  const j = JSON.parse(text);
+  if (Array.isArray(j.items)) return bitwardenToImport(j); // Bitwarden / Vaultwarden JSON
+  if (Array.isArray(j.services) || Array.isArray(j.emails)) { // Maildex's own export
+    return { payload: { emails: (j.emails || []).map((e) => pick(e, EMAIL_FIELDS)), services: (j.services || []).map((s) => pick(s, SERVICE_FIELDS)) }, skipped: 0, notesLeftOut: false };
+  }
+  throw new Error('Unrecognised file. Use a Maildex JSON export, a Bitwarden/Vaultwarden export, or a CSV.');
 }
 
 async function importFile(e) {
@@ -803,12 +854,12 @@ async function importFile(e) {
   e.target.value = '';
   if (!f) return;
   try {
-    const text = await f.text();
-    const payload = /\.csv$/i.test(f.name) ? csvToImport(text) : JSON.parse(text);
+    const { payload, skipped, notesLeftOut } = parseImport(f.name, await f.text());
     const r = await api('POST', '/api/import', payload);
     await loadData();
     renderView();
-    toast(`Imported ${r.servicesAdded} service${r.servicesAdded === 1 ? '' : 's'}, ${r.emailsAdded} new email${r.emailsAdded === 1 ? '' : 's'}${r.skipped ? ` (${r.skipped} skipped)` : ''}`);
+    const noEmail = skipped ? ` ${skipped} had no email address and were skipped.` : '';
+    toast(`Imported ${r.servicesAdded} service${r.servicesAdded === 1 ? '' : 's'}, ${r.emailsAdded} new email${r.emailsAdded === 1 ? '' : 's'}.${noEmail}${notesLeftOut ? ' Notes were left out.' : ''}`);
   } catch (x) { toast(x.message || 'Import failed', true); }
 }
 

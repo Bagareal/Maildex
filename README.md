@@ -19,7 +19,7 @@ If you juggle many email addresses, you have probably lost track of which one ho
 - **Email overview**: every address with its recovery info and the list of services that depend on it.
 - **At-risk emails**: flag a leaked or old address and see every service you need to secure.
 - **Renewal reminders**: upcoming renewals are surfaced at the top of the list.
-- **Import / export**: JSON backup and restore, plus CSV import (Bitwarden, Chrome or a spreadsheet). Passwords in CSV files are never read.
+- **Import / export**: JSON backup and restore, plus import from a Bitwarden or Vaultwarden export (JSON or CSV), Chrome's CSV or any spreadsheet. The file is read only in your browser and is never uploaded: only the service name, email, username, website, folder and whether it has TOTP/passkeys are kept. Passwords, TOTP secrets, notes, cards and identities are left out.
 - **Biometric unlock**: WebAuthn passkeys on your device, verified on the server. The app locks itself after a period of inactivity.
 - **Light and dark** themes that follow your system.
 

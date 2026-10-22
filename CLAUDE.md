@@ -17,7 +17,7 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 
 - Go stdlib only (no third-party modules). Keep it that way unless there is a strong reason.
 - Front end uses a tiny `h()` DOM helper. Never build HTML from user data with `innerHTML` (only static icon strings use it).
-- No passwords for third-party services are ever stored or imported. CSV import ignores password columns on purpose.
+- No passwords for third-party services are ever stored, imported or even uploaded. Import files are parsed in the browser (`parseImport` in `app.js`) and the upload is built from an explicit whitelist of harmless fields; Bitwarden/Vaultwarden JSON and CSV are converted client-side (TOTP/passkey presence becomes a 2FA flag, the secret is dropped; notes are dropped for password-bearing files). Never POST a parsed user file as-is. v1.1.0 did that for JSON and would have sent a Bitwarden export, passwords included, to the server in clear text over HTTP.
 - Every state-changing API request must carry the `X-Maildex` header (CSRF guard, see `Server.api`). The front end's `api()` adds it.
 - Sessions are 90-day cookies. The idle lock (`Settings.LockMinutes`, default 5) only applies once a passkey is enrolled; locked sessions get HTTP 423 on data routes. The client calls `/api/ping` on activity so typing in search counts as use.
 - Passkeys require a secure origin and a hostname (not an IP). `expectFor` derives RP ID/origin from `Host` / `X-Forwarded-*`, so reverse proxies must forward those.
@@ -42,7 +42,7 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 
 ## Status
 
-- Latest release: **v1.1.0** (v1.0.0 initial, v1.0.1 fixed blank pages after login, v1.1.0 provider logos + per-service 2FA).
+- Latest release: **v1.1.1** (v1.0.0 initial, v1.0.1 fixed blank pages after login, v1.1.0 provider logos + per-service 2FA, v1.1.1 safe Bitwarden/Vaultwarden import).
 - Not yet verified on real hardware: passkey/biometric unlock (needs HTTPS and a hostname) and `install.sh` on a Proxmox host where the first run failed to start the container with Debian 13.
 - Open issue: on the user's container the `update` command was not found after install. Cause unknown (`setup.sh` creates it; they were given the one-liner `curl -fsSL .../scripts/setup.sh | bash` to recreate it). Check `ls -l /usr/local/bin` and `echo $PATH` in the container if it recurs.
 
