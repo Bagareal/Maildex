@@ -13,7 +13,9 @@ If you juggle many email addresses, you have probably lost track of which one ho
 ## Features
 
 - **Search that answers the question**: type "netflix" and see the email, username and sign-in method.
-- **Per-service details**: username, sign-in method (password, Google, Apple, passkey…), category, status (active / to close / closed), website, renewal date and notes.
+- **Per-service details**: username, sign-in method (password, Google, Apple, passkey…), status (active / to close / closed), website, renewal date and notes.
+- **Folders**: group services your way (Banks, Work, Family…). A service can be in several folders. Open a folder to see everything in it, and search also matches folder names. Folders from Bitwarden or older Maildex categories are created for you.
+- **Multi-select**: tap *Select* (or press and hold a service on a phone), pick any number of services and apply an action to all of them at once: add or remove a folder, add or remove 2FA methods, change the status, or delete. Adding 2FA keeps the methods a service already has.
 - **Two-step verification**: record which second factors each service has (authenticator app, passkey, security key, SMS, email code, app prompt, backup codes), filter by them, and see at a glance which active services have no 2FA.
 - **Provider logos**: pick your email provider (Gmail, Outlook, iCloud, Proton Mail, Yahoo, AOL, GMX, Zoho, Tuta and more) and see its logo everywhere. It is detected automatically from the address, and the logos are bundled, so nothing is fetched from the internet.
 - **Email overview**: every address with its recovery info and the list of services that depend on it.

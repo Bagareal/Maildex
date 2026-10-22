@@ -13,6 +13,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -34,7 +36,8 @@ type Service struct {
 	EmailID     string    `json:"emailId"`
 	Username    string    `json:"username"`
 	LoginMethod string    `json:"loginMethod"`
-	Category    string    `json:"category"`
+	Folders     []string  `json:"folders"`            // folder IDs; a service can be in several
+	Category    string    `json:"category,omitempty"` // pre-1.2 single category, migrated into Folders on load
 	Status      string    `json:"status"`
 	TwoFactor   []string  `json:"twoFactor"` // enabled second factors, empty when none
 	URL         string    `json:"url"`
@@ -42,6 +45,17 @@ type Service struct {
 	Notes       string    `json:"notes"`
 	Created     time.Time `json:"created"`
 }
+
+// Folder groups services. Folders are flat and a service can be in many.
+type Folder struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Color   string    `json:"color"` // #rrggbb
+	Created time.Time `json:"created"`
+}
+
+// FolderColors is the palette new folders cycle through.
+var FolderColors = []string{"#6366f1", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#8b5cf6", "#84cc16", "#f97316", "#14b8a6"}
 
 type Settings struct {
 	// LockMinutes is the idle time after which the app asks to be unlocked
@@ -52,7 +66,61 @@ type Settings struct {
 type Data struct {
 	Emails   []Email   `json:"emails"`
 	Services []Service `json:"services"`
+	Folders  []Folder  `json:"folders"`
 	Settings Settings  `json:"settings"`
+}
+
+// FolderIndex returns the index of the folder with this name (case-insensitive), or -1.
+func (d *Data) FolderIndex(name string) int {
+	for i := range d.Folders {
+		if strings.EqualFold(d.Folders[i].Name, name) {
+			return i
+		}
+	}
+	return -1
+}
+
+// EnsureFolder returns the ID of the named folder, creating it when missing.
+func (d *Data) EnsureFolder(name string) (id string, created bool) {
+	if i := d.FolderIndex(name); i >= 0 {
+		return d.Folders[i].ID, false
+	}
+	f := Folder{ID: NewID(), Name: name, Color: FolderColors[len(d.Folders)%len(FolderColors)], Created: time.Now()}
+	d.Folders = append(d.Folders, f)
+	return f.ID, true
+}
+
+// normalise makes every list non-nil (so JSON shows [] rather than null) and
+// turns the pre-1.2 single category into a folder. It reports whether it
+// changed anything that should be saved.
+func (d *Data) normalise() (migrated bool) {
+	if d.Emails == nil {
+		d.Emails = []Email{}
+	}
+	if d.Services == nil {
+		d.Services = []Service{}
+	}
+	if d.Folders == nil {
+		d.Folders = []Folder{}
+	}
+	for i := range d.Services {
+		sv := &d.Services[i]
+		if sv.Category != "" {
+			id, _ := d.EnsureFolder(sv.Category)
+			if !slices.Contains(sv.Folders, id) {
+				sv.Folders = append(sv.Folders, id)
+			}
+			sv.Category = ""
+			migrated = true
+		}
+		if sv.Folders == nil {
+			sv.Folders = []string{}
+		}
+		if sv.TwoFactor == nil {
+			sv.TwoFactor = []string{}
+		}
+	}
+	return migrated
 }
 
 type Credential struct {
@@ -98,8 +166,20 @@ func Open(dir string) (*Store, error) {
 	if err := readJSON(filepath.Join(dir, "auth.json"), &s.auth); err != nil {
 		return nil, err
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, "data.json")); err == nil {
-		_ = os.WriteFile(filepath.Join(dir, "data.json.bak"), b, 0o600)
+	raw, rerr := os.ReadFile(filepath.Join(dir, "data.json"))
+	if rerr == nil {
+		_ = os.WriteFile(filepath.Join(dir, "data.json.bak"), raw, 0o600)
+	}
+	if s.data.normalise() {
+		// Keep the untouched pre-1.2 data (categories) once, before rewriting it with folders.
+		if keep := filepath.Join(dir, "data.pre-folders.json"); rerr == nil {
+			if _, err := os.Stat(keep); err != nil {
+				_ = os.WriteFile(keep, raw, 0o600)
+			}
+		}
+		if err := writeJSON(filepath.Join(dir, "data.json"), &s.data); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -143,12 +223,7 @@ func (s *Store) Update(fn func(d *Data, a *Auth) error) error {
 	if err := fn(&s.data, &s.auth); err != nil {
 		return err
 	}
-	if s.data.Emails == nil {
-		s.data.Emails = []Email{}
-	}
-	if s.data.Services == nil {
-		s.data.Services = []Service{}
-	}
+	s.data.normalise()
 	if err := writeJSON(filepath.Join(s.dir, "data.json"), &s.data); err != nil {
 		return err
 	}

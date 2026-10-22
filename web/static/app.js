@@ -44,7 +44,14 @@ const ICONS = {
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
 };
+
+// Folder colours: keep in step with FolderColors in internal/store/store.go.
+const FOLDER_COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#8b5cf6', '#84cc16', '#f97316', '#14b8a6'];
 
 // Provider logo tile: brand colour with the logo, a coloured letter, or a neutral envelope.
 function providerTile(value, size = 44, address = '') {
@@ -137,13 +144,17 @@ async function api(method, url, body) {
 // ---------------------------------------------------------------- state
 const S = {
   session: null,
-  data: { emails: [], services: [], settings: { lockMinutes: 5 } },
+  data: { emails: [], services: [], folders: [], settings: { lockMinutes: 5 } },
   tab: 'services',
   q: '',
   fEmail: '',
   fStatus: '',
-  fCat: '',
+  fFolder: '', // '' = all, 'none' = unfiled, or a folder id
   f2fa: '',
+  openFolder: null, // folder id, 'none', or null while browsing the folder grid
+  selMode: false,
+  sel: new Set(), // selected service ids
+  visibleIds: [], // services currently listed, for "select all"
   passkeys: [],
   version: null,
   lastActivity: Date.now(),
@@ -152,6 +163,10 @@ const S = {
 
 const emailById = (id) => S.data.emails.find((e) => e.id === id);
 const servicesOf = (emailId) => S.data.services.filter((s) => s.emailId === emailId);
+const folderById = (id) => (S.data.folders || []).find((f) => f.id === id);
+const foldersOf = (s) => (s.folders || []).map(folderById).filter(Boolean);
+const inFolder = (folderId) => S.data.services.filter((s) => foldersOf(s).some((f) => f.id === folderId));
+const unfiled = () => S.data.services.filter((s) => !foldersOf(s).length);
 
 async function loadData() { S.data = await api('GET', '/api/data'); }
 
@@ -269,7 +284,10 @@ function renderLogin() {
 }
 
 function renderLock() {
-  S.data = { emails: [], services: [], settings: S.data.settings }; // nothing sensitive stays in memory while locked
+  S.data = { emails: [], services: [], folders: [], settings: S.data.settings }; // nothing sensitive stays in memory while locked
+  S.sel.clear();
+  S.selMode = false;
+  S.openFolder = null;
   const err = h('p', { class: 'error' });
   const pwBox = h('form', { style: 'display:none;gap:12px', onsubmit: async (e) => {
     e.preventDefault();
@@ -297,12 +315,15 @@ function renderLock() {
 // ---------------------------------------------------------------- shell
 const TABS = [
   ['services', 'Services', 'grid'],
+  ['folders', 'Folders', 'folder'],
   ['emails', 'Emails', 'mail'],
   ['settings', 'Settings', 'settings'],
 ];
 
 function setTab(tab) {
   S.tab = tab;
+  S.openFolder = null;
+  exitSelection(false);
   if (tab === 'settings') S.settingsLoaded = false;
   renderView();
   window.scrollTo(0, 0);
@@ -318,22 +339,28 @@ function renderApp() {
   const tabbar = h('nav', { class: 'tabbar' },
     ...TABS.map(([id, label, ic]) => h('button', { class: 'tab', 'data-tab': id, onclick: () => setTab(id) }, icon(ic), label)));
   const fab = h('button', { class: 'fab', 'aria-label': 'Add', onclick: addForTab }, icon('plus'));
-  app.replaceChildren(h('div', { class: 'shell' }, side, h('main', { class: 'main' }, h('div', { id: 'view' })), tabbar, fab));
+  app.replaceChildren(h('div', { class: 'shell' }, side, h('main', { class: 'main' }, h('div', { id: 'view' })), tabbar, fab, h('div', { id: 'selbar', class: 'selbar' })));
   renderView();
 }
 
 function renderView() {
   const v = document.getElementById('view');
   if (!v) return;
+  // Forget selected services that no longer exist (deleted here or on another device).
+  const live = new Set(S.data.services.map((s) => s.id));
+  S.sel = new Set([...S.sel].filter((id) => live.has(id)));
+  if (S.openFolder && S.openFolder !== 'none' && !folderById(S.openFolder)) S.openFolder = null;
   clear(v);
-  ({ services: viewServices, emails: viewEmails, settings: viewSettings })[S.tab](v);
+  ({ services: viewServices, folders: viewFolders, emails: viewEmails, settings: viewSettings })[S.tab](v);
   document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === S.tab));
+  renderSelectionBar();
 }
 
 function addForTab() {
   if (S.tab === 'emails') return emailForm();
+  if (S.tab === 'folders' && !S.openFolder) return folderForm();
   if (!S.data.emails.length) { toast('Add an email first'); S.tab = 'emails'; renderView(); return emailForm(); }
-  serviceForm();
+  serviceForm(undefined, S.tab === 'folders' && S.openFolder && S.openFolder !== 'none' ? { folders: [S.openFolder] } : undefined);
 }
 
 async function lockNow() {
@@ -390,103 +417,393 @@ function renewalText(date) {
   return 'Renews ' + new Date(date + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function filteredServices() {
+const safeColor = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#6366f1');
+const folderDot = (f) => h('i', { class: 'fdot', style: `background:${safeColor(f.color)}` });
+const folderTag = (f) => h('span', { class: 'ftag' }, folderDot(f), f.name);
+
+function filteredServices(folderKey = S.fFolder) {
   const toks = S.q.toLowerCase().split(/\s+/).filter(Boolean);
   return S.data.services
     .filter((s) => {
       if (S.fEmail && s.emailId !== S.fEmail) return false;
       if (S.fStatus && s.status !== S.fStatus) return false;
-      if (S.fCat && s.category !== S.fCat) return false;
+      const fl = foldersOf(s);
+      if (folderKey === 'none' ? fl.length > 0 : folderKey && !fl.some((f) => f.id === folderKey)) return false;
       const tf = s.twoFactor || [];
       if (S.f2fa === 'none' ? tf.length > 0 : S.f2fa && !tf.includes(S.f2fa)) return false;
       const e = emailById(s.emailId);
-      const hay = [s.name, s.username, s.category, s.url, s.notes, METHOD_LABEL[s.loginMethod], e && e.address, e && e.label].join(' ').toLowerCase();
+      const hay = [s.name, s.username, s.url, s.notes, METHOD_LABEL[s.loginMethod], e && e.address, e && e.label, ...fl.map((f) => f.name)].join(' ').toLowerCase();
       return toks.every((t) => hay.includes(t));
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ---------------------------------------------------------------- selection
+function toggleSelected(id) {
+  if (S.sel.has(id)) S.sel.delete(id); else S.sel.add(id);
+  refreshSelection();
+}
+
+function enterSelection(id) {
+  S.selMode = true;
+  if (id) S.sel.add(id);
+  refreshSelection();
+}
+
+function exitSelection(redraw = true) {
+  S.selMode = false;
+  S.sel.clear();
+  document.body.classList.remove('selecting');
+  if (redraw) refreshSelection();
+}
+
+// Updates checkmarks and the action bar in place, so lists and scroll positions are not rebuilt.
+function refreshSelection() {
+  document.body.classList.toggle('selecting', S.selMode);
+  document.querySelectorAll('.item[data-id]').forEach((el) => {
+    const on = S.sel.has(el.dataset.id);
+    el.classList.toggle('selected', on);
+    const box = el.querySelector('.sel');
+    if (box) box.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  renderSelectionBar();
+}
+
+function selectAllVisible() {
+  const all = S.visibleIds.length && S.visibleIds.every((id) => S.sel.has(id));
+  S.visibleIds.forEach((id) => (all ? S.sel.delete(id) : S.sel.add(id)));
+  refreshSelection();
+}
+
+function renderSelectionBar() {
+  const bar = document.getElementById('selbar');
+  if (!bar) return;
+  document.body.classList.toggle('selecting', S.selMode);
+  clear(bar);
+  if (!S.selMode) return;
+  const n = S.sel.size;
+  const act = (label, ic, fn, cls = '') => h('button', { class: 'btn small ' + cls, disabled: !n, onclick: fn }, icon(ic), label);
+  const allOn = S.visibleIds.length > 0 && S.visibleIds.every((id) => S.sel.has(id));
+  append(bar,
+    h('div', { class: 'sel-info' },
+      h('strong', null, n ? `${n} selected` : 'Select services'),
+      S.visibleIds.length ? h('button', { class: 'btn ghost small', onclick: selectAllVisible }, allOn ? 'Clear' : 'Select all') : null),
+    h('div', { class: 'sel-actions' },
+      act('Folder', 'folder', bulkFolderModal),
+      act('2FA', 'shield', bulkTwoFactorModal),
+      act('Status', 'check', bulkStatusModal),
+      act('Delete', 'trash', bulkDelete, 'danger')),
+    h('button', { class: 'btn small', onclick: () => exitSelection() }, 'Done'));
+}
+
+async function bulk(body) {
+  const r = await api('POST', '/api/services/bulk', { ids: [...S.sel], ...body });
+  await loadData();
+  return r.affected;
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// Finds a folder by name or creates it, so "type a new folder name" works everywhere.
+async function folderIdForName(name) {
+  const hit = S.data.folders.find((f) => f.name.toLowerCase() === name.toLowerCase());
+  if (hit) return hit.id;
+  const f = await api('POST', '/api/folders', { name });
+  S.data.folders.push(f);
+  return f.id;
+}
+
+function chipPicker(items, chosen, render) {
+  const box = h('div', { class: 'chips' });
+  const draw = () => {
+    clear(box);
+    for (const [id, label, extra] of items) {
+      box.append(h('button', { type: 'button', class: 'chip' + (chosen.has(id) ? ' on' : ''), 'aria-pressed': chosen.has(id) ? 'true' : 'false',
+        onclick: () => { if (chosen.has(id)) chosen.delete(id); else chosen.add(id); draw(); if (render) render(); } }, extra || null, label));
+    }
+  };
+  draw();
+  return box;
+}
+
+function bulkFolderModal() {
+  const chosen = new Set();
+  const err = h('p', { class: 'error' });
+  const newName = h('input', { class: 'input', placeholder: 'Or type a new folder name', maxLength: 40 });
+  const body = h('div', { style: 'display:grid;gap:12px' },
+    h('p', { class: 'note' }, `Applies to ${plural(S.sel.size, 'selected service')}.`),
+    S.data.folders.length ? chipPicker(S.data.folders.map((f) => [f.id, f.name, folderDot(f)]), chosen) : h('p', { class: 'note' }, 'No folders yet: type a name below to create the first one.'),
+    newName, err);
+  const run = async (mode, close) => {
+    err.textContent = '';
+    try {
+      const ids = [...chosen];
+      const name = newName.value.trim();
+      if (name) {
+        if (mode === 'remove' && !S.data.folders.some((f) => f.name.toLowerCase() === name.toLowerCase())) throw new Error(`There is no folder called "${name}".`);
+        ids.push(await folderIdForName(name));
+      }
+      if (!ids.length) { err.textContent = 'Choose or name a folder first.'; return; }
+      let n = 0;
+      for (const id of new Set(ids)) n = await bulk({ action: mode === 'add' ? 'addFolder' : 'removeFolder', folderId: id });
+      close();
+      renderView();
+      toast(`${mode === 'add' ? 'Added' : 'Removed'} ${plural(n, 'service')} ${mode === 'add' ? 'to' : 'from'} ${plural(new Set(ids).size, 'folder')}`);
+    } catch (x) { err.textContent = x.message; }
+  };
+  openModal('Folders', body, (close) => [
+    h('button', { class: 'btn', type: 'button', onclick: () => run('remove', close) }, 'Remove from'),
+    h('span', { class: 'spacer' }),
+    h('button', { class: 'btn primary', type: 'button', onclick: () => run('add', close) }, 'Add to'),
+  ]);
+}
+
+function bulkTwoFactorModal() {
+  const chosen = new Set();
+  const err = h('p', { class: 'error' });
+  const body = h('div', { style: 'display:grid;gap:12px' },
+    h('p', { class: 'note' }, `Adding keeps the methods a service already has. Applies to ${plural(S.sel.size, 'selected service')}.`),
+    chipPicker(TWOFA.map(([k, label]) => [k, label]), chosen), err);
+  const run = async (mode, close) => {
+    err.textContent = '';
+    if (!chosen.size) { err.textContent = 'Choose at least one method.'; return; }
+    try {
+      const n = await bulk({ action: mode === 'add' ? 'addTwoFactor' : 'removeTwoFactor', twoFactor: [...chosen] });
+      close();
+      renderView();
+      toast(`${mode === 'add' ? 'Added to' : 'Removed from'} ${plural(n, 'service')}`);
+    } catch (x) { err.textContent = x.message; }
+  };
+  openModal('Two-step verification', body, (close) => [
+    h('button', { class: 'btn', type: 'button', onclick: () => run('remove', close) }, 'Remove from all'),
+    h('span', { class: 'spacer' }),
+    h('button', { class: 'btn primary', type: 'button', onclick: () => run('add', close) }, 'Add to all'),
+  ]);
+}
+
+function bulkStatusModal() {
+  const err = h('p', { class: 'error' });
+  const body = h('div', { style: 'display:grid;gap:10px' },
+    h('p', { class: 'note' }, `Set the status of ${plural(S.sel.size, 'selected service')}.`),
+    ...Object.entries(STATUS_LABEL).map(([k, label]) => h('button', { class: 'btn block', type: 'button', onclick: async () => {
+      try { const n = await bulk({ action: 'setStatus', status: k }); close(); renderView(); toast(`${plural(n, 'service')} set to ${label.toLowerCase()}`); } catch (x) { err.textContent = x.message; }
+    } }, label)), err);
+  const close = openModal('Status', body);
+}
+
+async function bulkDelete() {
+  const n = S.sel.size;
+  if (!n || !confirm(`Delete ${plural(n, 'service')}? This cannot be undone.`)) return;
+  try {
+    await bulk({ action: 'delete' });
+    S.sel.clear();
+    renderView();
+    toast(`Deleted ${plural(n, 'service')}`);
+  } catch (x) { toast(x.message, true); }
+}
+
+// ---------------------------------------------------------------- service list
 function serviceCard(s) {
   const e = emailById(s.emailId);
   const meta = h('div', { class: 'meta' },
-    e ? h('button', { class: 'email-chip', title: 'Copy email', onclick: (ev) => { ev.stopPropagation(); copyText(e.address); } }, providerTile(e.provider || (detectProvider(e.address) || {}).id, 18, e.address), h('span', null, e.address)) : null,
+    e ? h('button', { class: 'email-chip', title: 'Copy email', onclick: (ev) => { ev.stopPropagation(); if (S.selMode) toggleSelected(s.id); else copyText(e.address); } }, providerTile(e.provider || (detectProvider(e.address) || {}).id, 18, e.address), h('span', null, e.address)) : null,
     s.username && (!e || s.username.toLowerCase() !== e.address) ? h('span', null, s.username) : null,
     h('span', null, METHOD_LABEL[s.loginMethod] || s.loginMethod),
-    s.category ? h('span', null, '· ' + s.category) : null,
   );
   const tf = s.twoFactor || [];
   const security = h('div', { class: 'meta sec' }, icon('shield'),
     tf.length ? tf.map((k) => h('span', { class: 'badge ok' }, TWOFA_SHORT[k] || k)) : h('span', { class: 'badge' }, 'No 2FA'));
+  const tags = foldersOf(s);
+  const folderRow = tags.length ? h('div', { class: 'meta ftags' }, ...tags.slice(0, 4).map(folderTag), tags.length > 4 ? h('span', null, `+${tags.length - 4}`) : null) : null;
   const soon = s.renewal && daysUntil(s.renewal) <= 14;
-  return h('button', { class: 'card item' + (s.status === 'closed' ? ' closed' : ''), onclick: () => serviceForm(s) },
+
+  const activate = () => (S.selMode ? toggleSelected(s.id) : serviceForm(s));
+  let timer = null, longPressed = false, touching = false;
+  const card = h('div', { class: 'card item' + (s.status === 'closed' ? ' closed' : '') + (S.sel.has(s.id) ? ' selected' : ''), role: 'button', tabindex: '0', 'data-id': s.id,
+    onclick: () => { if (longPressed) { longPressed = false; return; } activate(); },
+    onkeydown: (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target === card) { ev.preventDefault(); activate(); } },
+    // Touch: press and hold selects (and starts selection mode), like a gallery app.
+    onpointerdown: (ev) => {
+      touching = ev.pointerType !== 'mouse';
+      if (!touching) return;
+      longPressed = false;
+      timer = setTimeout(() => { longPressed = true; if (navigator.vibrate) navigator.vibrate(15); S.selMode ? toggleSelected(s.id) : enterSelection(s.id); }, 450);
+    },
+    onpointerup: () => clearTimeout(timer),
+    onpointerleave: () => clearTimeout(timer),
+    onpointercancel: () => clearTimeout(timer),
+    oncontextmenu: (ev) => { if (touching) ev.preventDefault(); } },
+    h('span', { class: 'sel', role: 'checkbox', 'aria-label': 'Select ' + s.name, 'aria-checked': S.sel.has(s.id) ? 'true' : 'false',
+      onclick: (ev) => { ev.stopPropagation(); toggleSelected(s.id); } }, icon('check')),
     avatar(s.name),
     h('div', { class: 'body' },
       h('div', { class: 'title' }, h('span', null, s.name),
         s.status !== 'active' ? h('span', { class: 'badge ' + (s.status === 'to-close' ? 'warn' : '') }, STATUS_LABEL[s.status]) : null,
         e && e.atRisk ? h('span', { class: 'badge danger' }, 'Email at risk') : null),
-      meta, security),
+      meta, security, folderRow),
     s.renewal ? h('div', { class: 'renew' + (soon ? ' soon' : '') }, renewalText(s.renewal)) : null);
+  return card;
 }
 
-function viewServices(v) {
-  const { emails, services } = S.data;
-  append(v, pageHead('Services', `${services.length} service${services.length === 1 ? '' : 's'} across ${emails.length} email${emails.length === 1 ? '' : 's'}`, addBtn('Add service', addForTab)));
+const headActions = (...kids) => h('div', { class: 'head-actions' }, ...kids);
+const selectBtn = () => h('button', { class: 'btn', onclick: () => (S.selMode ? exitSelection() : enterSelection()) }, icon('check'), 'Select');
 
-  if (!emails.length) {
-    append(v, h('div', { class: 'card empty' }, h('h3', null, 'Start with your emails'), h('p', null, 'Add the email addresses you use, then record which services each one has.'),
-      h('button', { class: 'btn primary', onclick: () => { S.tab = 'emails'; renderView(); emailForm(); } }, icon('plus'), 'Add your first email')));
-    return;
-  }
+// Search, filters and the list. `folderScope` pins the list to one folder (or 'none'); without it a folder filter is shown.
+function serviceBrowser(v, folderScope) {
+  const { emails, services, folders } = S.data;
+  const scoped = folderScope !== undefined;
 
   const search = h('div', { class: 'search' }, icon('search'),
-    h('input', { class: 'input', type: 'search', placeholder: 'Search a service, email or username…', value: S.q, autocomplete: 'off', enterkeyhint: 'search',
+    h('input', { class: 'input', type: 'search', placeholder: 'Search a service, email, username or folder…', value: S.q, autocomplete: 'off', enterkeyhint: 'search',
       oninput: (e) => { S.q = e.target.value; updateList(); } }));
 
   const sel = (key, label, options) => h('select', { class: 'input', 'aria-label': label,
     onchange: (e) => { S[key] = e.target.value; updateList(); } },
     h('option', { value: '' }, label), ...options.map(([val, text]) => h('option', { value: val, selected: S[key] === val }, text)));
-  const cats = [...new Set(services.map((s) => s.category).filter(Boolean))].sort();
   const filters = h('div', { class: 'filters' },
     sel('fEmail', 'All emails', emails.map((e) => [e.id, e.address])),
     sel('fStatus', 'Any status', Object.entries(STATUS_LABEL)),
     sel('f2fa', 'Any 2FA', [['none', 'No 2FA'], ...TWOFA.map(([k, label]) => [k, 'With ' + label.toLowerCase()])]),
-    cats.length ? sel('fCat', 'All categories', cats.map((c) => [c, c])) : null);
+    scoped || !folders.length ? null : sel('fFolder', 'All folders', [['none', 'No folder'], ...folders.map((f) => [f.id, f.name])]));
 
   const alerts = h('div', { class: 'alerts' });
-  const no2fa = services.filter((s) => s.status === 'active' && !(s.twoFactor || []).length).length;
-  if (no2fa) {
-    alerts.append(h('button', { class: 'alert-chip info', onclick: () => { S.f2fa = 'none'; S.fStatus = 'active'; renderView(); } }, icon('shield'), `${no2fa} active service${no2fa === 1 ? '' : 's'} without 2FA`));
+  if (!scoped) {
+    const no2fa = services.filter((s) => s.status === 'active' && !(s.twoFactor || []).length).length;
+    if (no2fa) {
+      alerts.append(h('button', { class: 'alert-chip info', onclick: () => { S.f2fa = 'none'; S.fStatus = 'active'; renderView(); } }, icon('shield'), `${no2fa} active service${no2fa === 1 ? '' : 's'} without 2FA`));
+    }
+    const risky = emails.filter((e) => e.atRisk);
+    if (risky.length) {
+      const n = risky.reduce((sum, e) => sum + servicesOf(e.id).length, 0);
+      alerts.append(h('button', { class: 'alert-chip', onclick: () => setTab('emails') }, icon('alert'), `${risky.length} email${risky.length === 1 ? '' : 's'} at risk · ${n} service${n === 1 ? '' : 's'} to secure`));
+    }
+    services.filter((s) => s.renewal && s.status !== 'closed' && daysUntil(s.renewal) <= 30)
+      .sort((a, b) => a.renewal.localeCompare(b.renewal)).slice(0, 4)
+      .forEach((s) => alerts.append(h('button', { class: 'alert-chip info', onclick: () => serviceForm(s) }, icon('calendar'), `${s.name} · ${renewalText(s.renewal).toLowerCase()}`)));
   }
-  const risky = emails.filter((e) => e.atRisk);
-  if (risky.length) {
-    const n = risky.reduce((sum, e) => sum + servicesOf(e.id).length, 0);
-    alerts.append(h('button', { class: 'alert-chip', onclick: () => setTab('emails') }, icon('alert'), `${risky.length} email${risky.length === 1 ? '' : 's'} at risk · ${n} service${n === 1 ? '' : 's'} to secure`));
-  }
-  services.filter((s) => s.renewal && s.status !== 'closed' && daysUntil(s.renewal) <= 30)
-    .sort((a, b) => a.renewal.localeCompare(b.renewal)).slice(0, 4)
-    .forEach((s) => alerts.append(h('button', { class: 'alert-chip info', onclick: () => serviceForm(s) }, icon('calendar'), `${s.name} · ${renewalText(s.renewal).toLowerCase()}`)));
 
   const count = h('p', { class: 'count' });
   const list = h('div', { class: 'list' });
   append(v, search, filters, alerts.children.length ? alerts : null, count, list);
 
   function updateList() {
-    const rows = filteredServices();
+    const rows = filteredServices(scoped ? folderScope : S.fFolder);
+    S.visibleIds = rows.map((s) => s.id);
     clear(list);
     count.textContent = rows.length === services.length ? '' : `${rows.length} match${rows.length === 1 ? '' : 'es'}`;
     if (!rows.length) {
-      list.append(h('div', { class: 'empty' }, h('h3', null, services.length ? 'No matches' : 'No services yet'),
-        services.length ? h('p', null, 'Try a different search or clear the filters.') : h('button', { class: 'btn primary', onclick: () => serviceForm() }, icon('plus'), 'Add your first service')));
-      return;
+      const nothingYet = scoped ? !(folderScope === 'none' ? unfiled() : inFolder(folderScope)).length : !services.length;
+      list.append(h('div', { class: 'empty' },
+        h('h3', null, nothingYet ? (scoped ? 'Nothing in this folder yet' : 'No services yet') : 'No matches'),
+        nothingYet
+          ? (scoped ? h('p', null, 'Open the Services tab, tap Select, pick some services and choose Folder.') : h('button', { class: 'btn primary', onclick: () => serviceForm() }, icon('plus'), 'Add your first service'))
+          : h('p', null, 'Try a different search or clear the filters.')));
+    } else {
+      rows.forEach((s) => list.append(serviceCard(s)));
     }
-    rows.forEach((s) => list.append(serviceCard(s)));
+    refreshSelection();
   }
   updateList();
 }
 
+function viewServices(v) {
+  const { emails, services } = S.data;
+  append(v, pageHead('Services', `${plural(services.length, 'service')} across ${plural(emails.length, 'email')}`, headActions(selectBtn(), addBtn('Add service', addForTab))));
+
+  if (!emails.length) {
+    append(v, h('div', { class: 'card empty' }, h('h3', null, 'Start with your emails'), h('p', null, 'Add the email addresses you use, then record which services each one has.'),
+      h('button', { class: 'btn primary', onclick: () => { S.tab = 'emails'; renderView(); emailForm(); } }, icon('plus'), 'Add your first email')));
+    return;
+  }
+  serviceBrowser(v);
+}
+
+// ---------------------------------------------------------------- folders view
+function folderCard(f, count) {
+  const c = f ? safeColor(f.color) : '';
+  return h('button', { class: 'card folder-card', onclick: () => {
+    S.q = ''; S.fEmail = ''; S.fStatus = ''; S.f2fa = '';
+    S.openFolder = f ? f.id : 'none';
+    renderView();
+    window.scrollTo(0, 0);
+  } },
+    h('div', { class: 'folder-ic', style: f ? `background:${c}26;color:${c}` : '' }, icon('folder')),
+    h('div', { class: 'folder-name' }, f ? f.name : 'No folder'),
+    h('div', { class: 'note' }, plural(count, 'service')));
+}
+
+function viewFolders(v) {
+  if (S.openFolder) return viewFolderOpen(v);
+  const { folders, services } = S.data;
+  append(v, pageHead('Folders', `${plural(folders.length, 'folder')} · a service can be in several`, headActions(addBtn('New folder', () => folderForm()))));
+  if (!folders.length) {
+    append(v, h('div', { class: 'card empty' }, h('h3', null, 'No folders yet'),
+      h('p', null, 'Group services however you like: Banks, Work, Family… A service can be in more than one folder.'),
+      h('button', { class: 'btn primary', onclick: () => folderForm() }, icon('plus'), 'Create a folder')));
+  }
+  const grid = h('div', { class: 'folder-grid' });
+  [...folders].sort((a, b) => a.name.localeCompare(b.name)).forEach((f) => grid.append(folderCard(f, inFolder(f.id).length)));
+  if (services.length && folders.length) grid.append(folderCard(null, unfiled().length));
+  append(v, grid);
+}
+
+function viewFolderOpen(v) {
+  const f = S.openFolder === 'none' ? null : folderById(S.openFolder);
+  const count = (f ? inFolder(f.id) : unfiled()).length;
+  append(v, h('div', { class: 'page-head' },
+    h('div', { class: 'crumb' },
+      h('button', { class: 'btn small', 'aria-label': 'Back to folders', onclick: () => { S.openFolder = null; exitSelection(false); renderView(); } }, icon('back')),
+      h('div', null, h('h1', null, f ? h('span', { class: 'folder-title' }, folderDot(f), f.name) : 'No folder'), h('p', null, plural(count, 'service')))),
+    headActions(f ? h('button', { class: 'btn', onclick: () => folderForm(f) }, 'Edit') : null, selectBtn(), addBtn('Add service', addForTab))));
+  serviceBrowser(v, S.openFolder);
+}
+
+function folderForm(existing) {
+  const f = existing || { name: '', color: FOLDER_COLORS[S.data.folders.length % FOLDER_COLORS.length] };
+  let color = safeColor(f.color);
+  const err = h('p', { class: 'error' });
+  const name = h('input', { class: 'input', value: f.name, maxLength: 40, placeholder: 'Banks, Work, Family…', required: true, autocomplete: 'off' });
+  const swatches = h('div', { class: 'swatches' });
+  const draw = () => {
+    clear(swatches);
+    FOLDER_COLORS.forEach((c) => swatches.append(h('button', { type: 'button', class: 'swatch' + (c === color ? ' on' : ''), style: `background:${c}`, 'aria-label': 'Color ' + c, 'aria-pressed': c === color ? 'true' : 'false', onclick: () => { color = c; draw(); } })));
+  };
+  draw();
+  const form = h('form', { style: 'display:grid;gap:12px' }, field('Name', name), h('div', { class: 'field' }, h('span', null, 'Color'), swatches), err);
+  const save = async (close) => {
+    err.textContent = '';
+    try {
+      if (existing) await api('PUT', '/api/folders/' + existing.id, { name: name.value, color });
+      else await api('POST', '/api/folders', { name: name.value, color });
+      await loadData();
+      close();
+      renderView();
+      toast(existing ? 'Saved' : 'Folder created');
+    } catch (x) { err.textContent = x.message; }
+  };
+  const close = openModal(existing ? 'Edit folder' : 'New folder', form, (closeFn) => [
+    existing ? h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+      const n = inFolder(existing.id).length;
+      if (!confirm(`Delete the folder "${existing.name}"?${n ? ` Its ${plural(n, 'service')} will be kept.` : ''}`)) return;
+      try {
+        await api('DELETE', '/api/folders/' + existing.id);
+        if (S.openFolder === existing.id) S.openFolder = null;
+        await loadData();
+        closeFn();
+        renderView();
+        toast('Folder deleted');
+      } catch (x) { err.textContent = x.message; }
+    } }, 'Delete') : null,
+    h('span', { class: 'spacer' }),
+    h('button', { class: 'btn primary', type: 'button', onclick: () => save(closeFn) }, 'Save'),
+  ]);
+  form.addEventListener('submit', (e) => { e.preventDefault(); save(close); });
+  if (!existing) name.focus();
+}
+
 // ---------------------------------------------------------------- service form
-function serviceForm(existing) {
-  const s = existing || { name: '', emailId: S.fEmail || (S.data.emails[0] && S.data.emails[0].id) || '', username: '', loginMethod: 'password', category: '', status: 'active', twoFactor: [], url: '', renewal: '', notes: '' };
+function serviceForm(existing, preset) {
+  const s = existing || { name: '', emailId: S.fEmail || (S.data.emails[0] && S.data.emails[0].id) || '', username: '', loginMethod: 'password', folders: (preset && preset.folders) || [], status: 'active', twoFactor: [], url: '', renewal: '', notes: '' };
   const err = h('p', { class: 'error' });
   const tfSel = new Set(s.twoFactor || []);
   const tfChips = h('div', { class: 'chips' }, ...TWOFA.map(([k, label]) => {
@@ -497,12 +814,29 @@ function serviceForm(existing) {
     } }, label);
     return chip;
   }));
+
+  // Folders: toggle existing ones, or type a name to create one on the spot.
+  const fSel = new Set((s.folders || []).filter((id) => folderById(id)));
+  const folderChips = h('div', { class: 'chips' });
+  const drawFolders = () => {
+    clear(folderChips);
+    if (!S.data.folders.length) folderChips.append(h('span', { class: 'note' }, 'No folders yet. Type a name below to create one.'));
+    S.data.folders.forEach((f) => folderChips.append(h('button', { type: 'button', class: 'chip' + (fSel.has(f.id) ? ' on' : ''), 'aria-pressed': fSel.has(f.id) ? 'true' : 'false',
+      onclick: () => { if (fSel.has(f.id)) fSel.delete(f.id); else fSel.add(f.id); drawFolders(); } }, folderDot(f), f.name)));
+  };
+  drawFolders();
+  const newFolder = h('input', { class: 'input', placeholder: 'New folder…', maxLength: 40, autocomplete: 'off',
+    onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addFolder(); } } });
+  const addFolder = async () => {
+    const n = newFolder.value.trim();
+    if (!n) return;
+    try { fSel.add(await folderIdForName(n)); newFolder.value = ''; err.textContent = ''; drawFolders(); } catch (x) { err.textContent = x.message; }
+  };
+
   const name = h('input', { class: 'input', value: s.name, placeholder: 'Netflix, GitHub, bank…', required: true, maxLength: 120, autocomplete: 'off' });
   const email = h('select', { class: 'input' }, ...S.data.emails.map((e) => h('option', { value: e.id, selected: e.id === s.emailId }, e.address + (e.label ? ` (${e.label})` : ''))));
   const username = h('input', { class: 'input', value: s.username, placeholder: 'If different from the email', autocomplete: 'off', autocapitalize: 'none' });
   const method = h('select', { class: 'input' }, ...Object.entries(METHOD_LABEL).map(([k, t]) => h('option', { value: k, selected: k === s.loginMethod }, t)));
-  const cats = [...new Set(S.data.services.map((x) => x.category).filter(Boolean))];
-  const category = h('input', { class: 'input', value: s.category, placeholder: 'Streaming, banking, work…', list: 'cat-list', maxLength: 40 });
   const status = h('select', { class: 'input' }, ...Object.entries(STATUS_LABEL).map(([k, t]) => h('option', { value: k, selected: k === s.status }, t)));
   const url = h('input', { class: 'input', value: s.url, placeholder: 'example.com', inputmode: 'url', autocapitalize: 'none' });
   const renewal = h('input', { class: 'input', type: 'date', value: s.renewal });
@@ -515,17 +849,19 @@ function serviceForm(existing) {
     h('div', { class: 'row2' }, field('Sign-in method', method), field('Status', status)),
     field('Username', username),
     h('div', { class: 'field' }, h('span', null, 'Two-step verification (2FA)'), tfChips),
-    h('div', { class: 'row2' }, field('Category', category), field('Renewal date', renewal)),
+    h('div', { class: 'field' }, h('span', null, 'Folders'), folderChips,
+      h('div', { class: 'row-add' }, newFolder, h('button', { class: 'btn small', type: 'button', onclick: addFolder }, 'Add'))),
+    field('Renewal date', renewal),
     field('Website', url),
     field('Notes', notes),
-    h('datalist', { id: 'cat-list' }, ...cats.map((c) => h('option', { value: c }))),
     err);
 
-  const body = () => ({ name: name.value, emailId: email.value, username: username.value, loginMethod: method.value, category: category.value, status: status.value, twoFactor: [...tfSel], url: url.value, renewal: renewal.value, notes: notes.value });
+  const body = () => ({ name: name.value, emailId: email.value, username: username.value, loginMethod: method.value, folders: [...fSel], status: status.value, twoFactor: [...tfSel], url: url.value, renewal: renewal.value, notes: notes.value });
   const save = async (close) => {
     err.textContent = '';
     if (!name.value.trim()) { err.textContent = 'Give the service a name.'; return; }
     try {
+      if (newFolder.value.trim()) await addFolder(); // a typed but not yet added folder still counts
       if (existing) await api('PUT', '/api/services/' + existing.id, body());
       else await api('POST', '/api/services', body());
       await loadData();
@@ -700,7 +1036,7 @@ function viewSettings(v) {
   // Data
   const file = h('input', { type: 'file', accept: '.json,.csv,application/json,text/csv', style: 'display:none', onchange: importFile });
   const data = h('div', { class: 'card section' }, h('h2', null, icon('download'), 'Backup & import'),
-    h('p', { class: 'note' }, 'Export everything as JSON, or import a JSON export or a CSV (name, email, username, category, url, 2fa…). Bitwarden and Vaultwarden exports work too. The file is read only in your browser and is never uploaded: passwords, TOTP secrets and notes are left out.'),
+    h('p', { class: 'note' }, 'Export everything as JSON, or import a JSON export or a CSV (name, email, username, folder, url, 2fa…). Bitwarden and Vaultwarden exports work too. The file is read only in your browser and is never uploaded: passwords, TOTP secrets and notes are left out.'),
     h('div', { class: 'row', style: 'justify-content:flex-start' },
       h('button', { class: 'btn', onclick: exportData }, icon('download'), 'Export JSON'),
       h('button', { class: 'btn', onclick: () => file.click() }, icon('upload'), 'Import file'), file));
@@ -783,7 +1119,8 @@ function parseTwoFactor(text) {
 // browser and builds the upload from an explicit list of harmless fields, so
 // passwords, TOTP secrets, cards and notes never leave the file picker. The
 // file itself is never sent to the server.
-const SERVICE_FIELDS = ['name', 'email', 'username', 'loginMethod', 'category', 'status', 'twoFactor', 'url', 'renewal', 'notes'];
+const SERVICE_FIELDS = ['name', 'email', 'username', 'loginMethod', 'folders', 'category' /* pre-folders exports */, 'status', 'twoFactor', 'url', 'renewal', 'notes'];
+const FOLDER_FIELDS = ['name', 'color'];
 const EMAIL_FIELDS = ['address', 'label', 'provider', 'recovery', 'notes', 'atRisk'];
 const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj && obj[k] !== undefined).map((k) => [k, obj[k]]));
 
@@ -815,7 +1152,7 @@ function csvToImport(text) {
     if (!email) { skipped++; continue; }
     const twoFactor = parseTwoFactor(get(r, 'twoFactor'));
     if (totpCol >= 0 && (r[totpCol] || '').trim() && !twoFactor.includes('totp')) twoFactor.push('totp'); // only the fact, never the secret
-    services.push({ name: get(r, 'name'), email, username, url: get(r, 'url'), category: get(r, 'category'), status: get(r, 'status'), notes: hasSecrets ? '' : get(r, 'notes'), renewal: get(r, 'renewal'), loginMethod: get(r, 'loginMethod'), twoFactor });
+    services.push({ name: get(r, 'name'), email, username, url: get(r, 'url'), folders: get(r, 'category').split('|').map((x) => x.trim()).filter(Boolean), status: get(r, 'status'), notes: hasSecrets ? '' : get(r, 'notes'), renewal: get(r, 'renewal'), loginMethod: get(r, 'loginMethod'), twoFactor });
   }
   return { payload: { emails: [], services }, skipped, notesLeftOut: hasSecrets };
 }
@@ -834,7 +1171,7 @@ function bitwardenToImport(j) {
     if (login.totp) twoFactor.push('totp'); // only the fact, never the secret
     if ((login.fido2Credentials || []).length) twoFactor.push('passkey');
     const uri = ((login.uris || [])[0] || {}).uri || '';
-    services.push({ name: it.name || '', email, username, url: /^https?:\/\//i.test(uri) ? uri : '', category: folders.get(it.folderId) || '', twoFactor });
+    services.push({ name: it.name || '', email, username, url: /^https?:\/\//i.test(uri) ? uri : '', folders: folders.get(it.folderId) ? [folders.get(it.folderId)] : [], twoFactor });
   }
   return { payload: { emails: [], services }, skipped, notesLeftOut: true };
 }
@@ -844,7 +1181,7 @@ function parseImport(name, text) {
   const j = JSON.parse(text);
   if (Array.isArray(j.items)) return bitwardenToImport(j); // Bitwarden / Vaultwarden JSON
   if (Array.isArray(j.services) || Array.isArray(j.emails)) { // Maildex's own export
-    return { payload: { emails: (j.emails || []).map((e) => pick(e, EMAIL_FIELDS)), services: (j.services || []).map((s) => pick(s, SERVICE_FIELDS)) }, skipped: 0, notesLeftOut: false };
+    return { payload: { emails: (j.emails || []).map((e) => pick(e, EMAIL_FIELDS)), folders: (j.folders || []).map((f) => pick(f, FOLDER_FIELDS)), services: (j.services || []).map((s) => pick(s, SERVICE_FIELDS)) }, skipped: 0, notesLeftOut: false };
   }
   throw new Error('Unrecognised file. Use a Maildex JSON export, a Bitwarden/Vaultwarden export, or a CSV.');
 }
@@ -859,7 +1196,7 @@ async function importFile(e) {
     await loadData();
     renderView();
     const noEmail = skipped ? ` ${skipped} had no email address and were skipped.` : '';
-    toast(`Imported ${r.servicesAdded} service${r.servicesAdded === 1 ? '' : 's'}, ${r.emailsAdded} new email${r.emailsAdded === 1 ? '' : 's'}.${noEmail}${notesLeftOut ? ' Notes were left out.' : ''}`);
+    toast(`Imported ${r.servicesAdded} service${r.servicesAdded === 1 ? '' : 's'}, ${r.emailsAdded} new email${r.emailsAdded === 1 ? '' : 's'}${r.foldersAdded ? ` and ${r.foldersAdded} folder${r.foldersAdded === 1 ? '' : 's'}` : ''}.${noEmail}${notesLeftOut ? ' Notes were left out.' : ''}`);
   } catch (x) { toast(x.message || 'Import failed', true); }
 }
 

@@ -60,12 +60,11 @@ func (in emailInput) normalize() (store.Email, error) {
 	}, nil
 }
 
-type serviceInput struct {
+// serviceCore holds the fields shared by the API and the import/export file.
+type serviceCore struct {
 	Name        string   `json:"name"`
-	EmailID     string   `json:"emailId,omitempty"`
 	Username    string   `json:"username"`
 	LoginMethod string   `json:"loginMethod"`
-	Category    string   `json:"category"`
 	Status      string   `json:"status"`
 	TwoFactor   []string `json:"twoFactor"`
 	URL         string   `json:"url"`
@@ -73,7 +72,14 @@ type serviceInput struct {
 	Notes       string   `json:"notes"`
 }
 
-func (in serviceInput) normalize() (store.Service, error) {
+// serviceInput is what the web UI sends: the email and folders by ID.
+type serviceInput struct {
+	serviceCore
+	EmailID string   `json:"emailId"`
+	Folders []string `json:"folders"`
+}
+
+func (in serviceCore) normalize() (store.Service, error) {
 	name := clip(in.Name, 120)
 	if name == "" {
 		return store.Service{}, errors.New("service name is required")
@@ -102,8 +108,8 @@ func (in serviceInput) normalize() (store.Service, error) {
 		url = "https://" + url
 	}
 	return store.Service{
-		Name: name, EmailID: in.EmailID, Username: clip(in.Username, 120), LoginMethod: method,
-		Category: clip(in.Category, 40), Status: status, TwoFactor: cleanTwoFactor(in.TwoFactor), URL: url, Renewal: renewal, Notes: clip(in.Notes, 2000),
+		Name: name, Username: clip(in.Username, 120), LoginMethod: method,
+		Status: status, TwoFactor: cleanTwoFactor(in.TwoFactor), URL: url, Renewal: renewal, Notes: clip(in.Notes, 2000),
 	}, nil
 }
 
@@ -147,7 +153,7 @@ func respond(w http.ResponseWriter, err error, okBody any) {
 		writeJSON(w, http.StatusOK, okBody)
 	case errors.Is(err, errNotFound):
 		fail(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, errDuplicate):
+	case errors.Is(err, errDuplicate), errors.Is(err, errFolderDup):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, errNoEmail):
 		fail(w, http.StatusBadRequest, err.Error())
@@ -162,6 +168,7 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		out = store.Data{
 			Emails:   append([]store.Email{}, d.Emails...),
 			Services: append([]store.Service{}, d.Services...),
+			Folders:  append([]store.Folder{}, d.Folders...),
 			Settings: d.Settings,
 		}
 	})
@@ -252,16 +259,17 @@ func (s *Server) handleServiceCreate(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, maxBody, &in) {
 		return
 	}
-	sv, err := in.normalize()
+	sv, err := in.serviceCore.normalize()
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sv.ID, sv.Created = store.NewID(), time.Now()
+	sv.ID, sv.Created, sv.EmailID = store.NewID(), time.Now(), in.EmailID
 	err = s.st.Update(func(d *store.Data, _ *store.Auth) error {
 		if findEmail(d, sv.EmailID) < 0 {
 			return errNoEmail
 		}
+		sv.Folders = keepFolders(d, in.Folders)
 		d.Services = append(d.Services, sv)
 		return nil
 	})
@@ -273,11 +281,12 @@ func (s *Server) handleServiceUpdate(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, maxBody, &in) {
 		return
 	}
-	sv, err := in.normalize()
+	sv, err := in.serviceCore.normalize()
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	sv.EmailID = in.EmailID
 	id := r.PathValue("id")
 	err = s.st.Update(func(d *store.Data, _ *store.Auth) error {
 		i := findService(d, id)
@@ -287,6 +296,7 @@ func (s *Server) handleServiceUpdate(w http.ResponseWriter, r *http.Request) {
 		if findEmail(d, sv.EmailID) < 0 {
 			return errNoEmail
 		}
+		sv.Folders = keepFolders(d, in.Folders)
 		sv.ID, sv.Created = id, d.Services[i].Created
 		d.Services[i] = sv
 		return nil
