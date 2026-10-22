@@ -2,6 +2,13 @@
 
 All notable changes to Maildex. Versions follow [semantic versioning](https://semver.org). To upgrade, run `update` in the container (see the README).
 
+## v1.2.1 - 2026-10-22
+
+**Fix: `update` not found**
+
+- `maildex`, `update`, `maildex-update` and `maildex-reset-password` are now also linked into `/usr/bin`. Some consoles (`pct enter`, `pct exec`, the Proxmox shell) start with a `PATH` that lacks `/usr/local/bin`, so `update` reported "command not found" even though it was installed.
+- Existing containers get the links the next time the installer runs: `/usr/local/bin/update` (or the one-liner in the README).
+
 ## v1.2.0 - 2026-10-22
 
 **Folders and multi-select**

@@ -92,6 +92,13 @@ EOF
 chmod 0755 /usr/local/bin/maildex-update /usr/local/bin/maildex-reset-password
 ln -sf /usr/local/bin/maildex-update /usr/local/bin/update
 
+# Some consoles (pct enter, pct exec, the Proxmox shell) start with a PATH that
+# lacks /usr/local/bin, so also link the commands into /usr/bin, which is always
+# on it.
+for cmd in maildex maildex-update maildex-reset-password update; do
+  ln -sf "/usr/local/bin/$cmd" "/usr/bin/$cmd"
+done
+
 systemctl daemon-reload
 systemctl enable maildex >/dev/null 2>&1
 systemctl restart maildex

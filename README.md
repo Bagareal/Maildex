@@ -49,7 +49,7 @@ pct exec <CTID> -- update
 
 or run `update` inside the container. The updater downloads the newest GitHub Release, verifies it and restarts the service. Your data is kept. Maildex also shows a notice in **Settings** when a new version is available. See the [changelog](CHANGELOG.md) for what each version changes.
 
-If the `update` command is missing, this does the same thing and recreates it:
+If the `update` command is missing (installs before v1.2.1 only linked it into `/usr/local/bin`, which some consoles do not have on their `PATH`), this does the same thing and recreates it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Bagareal/Maildex/main/scripts/setup.sh | bash

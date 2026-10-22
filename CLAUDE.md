@@ -47,10 +47,10 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 
 ## Status
 
-- Latest release: **v1.2.0** (v1.0.0 initial, v1.0.1 fixed blank pages after login, v1.1.0 provider logos + per-service 2FA, v1.1.1 safe Bitwarden/Vaultwarden import, v1.2.0 folders + multi-select).
+- Latest release: **v1.2.1** (v1.0.0 initial, v1.0.1 fixed blank pages after login, v1.1.0 provider logos + per-service 2FA, v1.1.1 safe Bitwarden/Vaultwarden import, v1.2.0 folders + multi-select, v1.2.1 commands linked into /usr/bin).
 - Not yet verified on real hardware: passkey/biometric unlock (needs HTTPS and a hostname) and `install.sh` on a Proxmox host where the first run failed to start the container with Debian 13.
 - The user has not yet confirmed upgrading their container to v1.2.0 (folders migration on real data is covered by `store_test.go` only).
-- Open issue: on the user's container the `update` command was not found after install. Cause unknown (`setup.sh` creates it; they were given the one-liner `curl -fsSL .../scripts/setup.sh | bash` to recreate it). Check `ls -l /usr/local/bin` and `echo $PATH` in the container if it recurs.
+- Fixed in v1.2.1: on the user's CT 106 `update` was installed but "not found" because the console `PATH` was `/sbin:/bin:/usr/sbin:/usr/bin` (no `/usr/local/bin`). `setup.sh` now also links the commands into `/usr/bin`. Not yet confirmed on their container (they must run `/usr/local/bin/update` once to get the links).
 
 ## Commands
 
