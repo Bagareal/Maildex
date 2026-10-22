@@ -47,7 +47,15 @@ From the Proxmox host:
 pct exec <CTID> -- update
 ```
 
-or run `update` inside the container. The updater downloads the newest GitHub Release, verifies it and restarts the service. Your data is kept. Maildex also shows a notice in **Settings** when a new version is available.
+or run `update` inside the container. The updater downloads the newest GitHub Release, verifies it and restarts the service. Your data is kept. Maildex also shows a notice in **Settings** when a new version is available. See the [changelog](CHANGELOG.md) for what each version changes.
+
+If the `update` command is missing, this does the same thing and recreates it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Bagareal/Maildex/main/scripts/setup.sh | bash
+```
+
+Upgrading to v1.2.0 turns each service's old category into a folder automatically and keeps your original data as `data.pre-folders.json`.
 
 ### Forgot your password?
 
@@ -79,12 +87,13 @@ Environment variables (set them in `/etc/default/maildex`):
 | `MAILDEX_DATA` | `/var/lib/maildex` | Data directory |
 | `MAILDEX_TLS_CERT` / `MAILDEX_TLS_KEY` | unset | Serve HTTPS directly |
 
-Data lives in two files in the data directory: `data.json` (emails, services, settings) and `auth.json` (password hash, passkeys, sessions). Back up the directory, or use **Settings → Export JSON**.
+Data lives in two files in the data directory: `data.json` (emails, services, folders, settings) and `auth.json` (password hash, passkeys, sessions). A copy of the previous `data.json` is kept as `data.json.bak`. Back up the directory, or use **Settings → Export JSON**.
 
 ## Security notes
 
 - The password is stored as a salted PBKDF2-SHA256 hash. Sessions use random tokens stored hashed on the server and sent in an `HttpOnly`, `SameSite=Lax` cookie.
 - Wrong passwords are throttled per client address.
+- Importing from a password manager happens entirely in your browser: the file is never uploaded, and passwords, TOTP secrets and notes are not read into the upload.
 - Biometric unlock uses WebAuthn with user verification required. Private keys never leave your device.
 - Maildex is designed for your home network or a private VPN. Do not expose it directly to the internet without HTTPS.
 
@@ -101,10 +110,14 @@ make build    # static binary in dist/
 Releases are built by GitHub Actions when you push a tag:
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
 This publishes `maildex-linux-amd64`, `maildex-linux-arm64` and `SHA256SUMS`, which is what `update` downloads.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Credits
 

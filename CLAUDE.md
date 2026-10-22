@@ -5,13 +5,15 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 ## Layout
 
 - `cmd/maildex/main.go`: entry point. Subcommands: `serve` (default), `version`, `reset-password`. Env: `MAILDEX_ADDR`, `MAILDEX_DATA`, `MAILDEX_TLS_CERT/KEY`. `version` is injected with `-ldflags "-X main.version=..."`.
-- `internal/store`: in-memory state persisted atomically to `data.json` (emails, services, settings) and `auth.json` (password hash, passkeys, sessions). Access only via `View` / `Update`.
+- `internal/store`: in-memory state persisted atomically to `data.json` (emails, services, folders, settings) and `auth.json` (password hash, passkeys, sessions). Access only via `View` / `Update`. Loads run `Data.normalise` (non-nil lists, category-to-folder migration).
 - `internal/server`: HTTP API + static hosting. `auth.go` (sessions, password, idle lock), `passkeys.go` (WebAuthn endpoints), `data.go` (service/email CRUD + validation), `folders.go` (folders CRUD and the bulk-action endpoint), `transfer.go` (JSON import/export), `update.go` (GitHub latest-release check).
 - `internal/webauthn`: minimal WebAuthn relying party (ES256 + RS256, "none" attestation, CBOR decoder). Has a software-authenticator test.
 - `web/static`: the whole UI (`index.html`, `app.js`, `providers.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `icons/`), embedded via `web/embed.go`. **No build step, no npm.**
 - `install.sh`: run on the Proxmox host. A whiptail step-by-step wizard modelled on homie's installer (defaults or advanced: ID, hostname, cores, RAM, disk, storage, bridge, DHCP/static IP, **DNS server + search domain**, privileged/unprivileged, root SSH, verbose, confirm; Cancel = back). Checks `lxcfs`, picks Debian 13 then 12 templates filtered by CPU arch, and if a container will not start it saves the LXC debug log to `/tmp/maildex-lxc-<ID>.log`, destroys it and retries with the next template (`MAILDEX_DEBIAN=12` skips 13). It pipes `scripts/setup.sh` into `pct exec`, so setup.sh must never read stdin (apt-get calls use `</dev/null`).
 - `scripts/setup.sh`: runs inside the container, installs/updates the binary and systemd unit, and creates `update`, `maildex-update` and `maildex-reset-password` in `/usr/local/bin`.
 - `tools/genicons`: regenerates the PNG icons (`make icons`).
+- `CHANGELOG.md`: user-facing release notes. Add an entry for every release. `README.md` is the user documentation (English).
+- Tests: `internal/server/*_test.go` (full HTTP flow, folders and bulk actions), `internal/store/store_test.go` (migration), `internal/webauthn/webauthn_test.go` (software authenticator). There are no automated browser tests; see Commands.
 
 ## Conventions and decisions
 
@@ -41,11 +43,13 @@ Self-hosted catalogue of "which email is used for which service". Go backend, pl
 - Drive E: does not record ownership, so git refuses the folder. Use `git -c safe.directory=E:/DOWNLOADS/myemails ...` per command (do not change global config) and `go build -buildvcs=false`.
 - No `gh`, no `make`, no Python. Node 24 and headless Edge (`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`) are available; a throwaway DevTools-protocol script (launch Edge with `--headless=new --remote-debugging-port`, use real `Input.dispatchMouseEvent` clicks, scroll elements into view, report `Runtime.exceptionThrown`) is how the UI was verified. Keep such scripts in the scratchpad, not the repo.
 - `git push` works over HTTPS with the stored credentials; set `GIT_TERMINAL_PROMPT=0` so it fails instead of hanging.
+- Write long scripts with the Write tool, not shell heredocs (quoting broke more than once). Git Bash `/tmp/...` is not the path the Read tool sees: convert with `cygpath -w` to view screenshots.
 
 ## Status
 
 - Latest release: **v1.2.0** (v1.0.0 initial, v1.0.1 fixed blank pages after login, v1.1.0 provider logos + per-service 2FA, v1.1.1 safe Bitwarden/Vaultwarden import, v1.2.0 folders + multi-select).
 - Not yet verified on real hardware: passkey/biometric unlock (needs HTTPS and a hostname) and `install.sh` on a Proxmox host where the first run failed to start the container with Debian 13.
+- The user has not yet confirmed upgrading their container to v1.2.0 (folders migration on real data is covered by `store_test.go` only).
 - Open issue: on the user's container the `update` command was not found after install. Cause unknown (`setup.sh` creates it; they were given the one-liner `curl -fsSL .../scripts/setup.sh | bash` to recreate it). Check `ls -l /usr/local/bin` and `echo $PATH` in the container if it recurs.
 
 ## Commands
@@ -68,7 +72,7 @@ CI (`.github/workflows/ci.yml`) checks gofmt, vet, tests, `node --check` on the 
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
-The workflow publishes `maildex-linux-amd64`, `maildex-linux-arm64` and `SHA256SUMS`. `scripts/setup.sh` (also run by the in-container `update` command) downloads and verifies exactly those names, so do not rename them. Bump the tag following semver; the in-app update notice compares against the latest release tag.
+The workflow publishes `maildex-linux-amd64`, `maildex-linux-arm64` and `SHA256SUMS`. `scripts/setup.sh` (also run by the in-container `update` command) downloads and verifies exactly those names, so do not rename them. Bump the tag following semver; the in-app update notice compares against the latest release tag. Before tagging: update `CHANGELOG.md`, the README features and the Status section below, run `gofmt -l .`, `go vet`, `go test`, `node --check` and the browser check, then push `main` and the tag, and poll the Actions API until the release exists.
 
 ## Ideas not built yet
 
